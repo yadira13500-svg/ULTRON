@@ -24,12 +24,19 @@ function safePublicUrl(value) {
   } catch { return null; }
 }
 
+const PROV = {
+  groq: { url: 'https://api.groq.com/openai/v1/chat/completions', models: true, fast: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'], big: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile'] },
+  gemini: { url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', models: true, fast: ['gemini-2.0-flash', 'gemini-2.5-flash'], big: ['gemini-2.5-flash', 'gemini-2.0-flash'] },
+  openai: { url: 'https://api.openai.com/v1/chat/completions', models: true, fast: ['gpt-4.1-mini', 'gpt-4o-mini'], big: ['gpt-4.1', 'gpt-4o', 'gpt-4.1-mini'] },
+  nvidia: { url: 'https://integrate.api.nvidia.com/v1/chat/completions', models: false }
+};
 async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia') {
-  const OA = provider === 'openai';
-  const pinned = await config.get(OA ? 'OPENAI_MODEL' : 'NVIDIA_MODEL');
+  const P = PROV[provider] || PROV.nvidia;
+  const OA = provider !== 'nvidia';
+  const pinned = await config.get(provider.toUpperCase() + '_MODEL');
   const fast = ['nvidia/nemotron-3.5-lightning-30b-a3b', 'nvidia/nemotron-3.5-bolt-e4b', 'nvidia/nemotron-3-ultra-550b-a55b', 'mistralai/mistral-large-4-1t-a52b'];
   const big = ['nvidia/nemotron-3-ultra-550b-a55b', 'mistralai/mistral-large-4-1t-a52b', 'nvidia/nemotron-3.5-lightning-30b-a3b'];
-  let candidates = [pinned, ...(OA ? (deep ? ['gpt-4.1', 'gpt-4o', 'gpt-4.1-mini'] : ['gpt-4.1-mini', 'gpt-4o-mini', 'gpt-4.1']) : (deep ? big : fast))].filter(Boolean);
+  let candidates = [pinned, ...(P.models ? (deep ? P.big : P.fast) : (deep ? big : fast))].filter(Boolean);
   const lastUser = String([...messages].reverse().find(m => m.role === 'user' && !/^Reference notes saved/.test(String(m.content)))?.content || '');
   let nudged = false;
   const defs = Object.entries(tools).map(([name, t]) => ({ type: 'function', function: { name, description: t.description, parameters: t.inputSchema } }));
@@ -37,7 +44,7 @@ async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia')
   for (let step = 0; step < 6; step++) {
     let r, failText = '';
     for (const model of candidates) {
-      r = await fetch(OA ? 'https://api.openai.com/v1/chat/completions' : 'https://integrate.api.nvidia.com/v1/chat/completions', {
+      r = await fetch(P.url, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
         body: JSON.stringify(Object.assign({ model, messages: convo, tools: defs, tool_choice: 'auto', temperature: 0.6, max_tokens: voice ? 600 : 2000 }, OA ? {} : { chat_template_kwargs: { enable_thinking: false } }))
@@ -185,15 +192,17 @@ export default async function (req, res) {
 
   try {
     let result, lastErr, nvErr;
-    const oaKey = await config.get('OPENAI_API_KEY');
-    const nvKey = oaKey || await config.get('NVIDIA_API_KEY');
-    const prov = oaKey ? 'openai' : 'nvidia';
-    if (nvKey) {
-      try { result = await runNvidia(nvKey, messages, tools, body.voice === true, body.deep === true || (body.voice !== true && ['engineer','legal','wellness','strategist','adaptive'].includes(mode)), prov); }
-      catch (err) { nvErr = err; throw new Error((oaKey ? 'OpenAI' : 'NVIDIA') + ' request failed: ' + String(err && err.message || err).slice(0, 300)); }
-    } else {
-      lastErr = new Error('No AI key is set. Add OPENAI_API_KEY on the project Setup page.');
+    const deepFlag = body.deep === true || (body.voice !== true && ['engineer','legal','wellness','strategist','adaptive'].includes(mode));
+    const order = [['groq', 'GROQ_API_KEY'], ['gemini', 'GEMINI_API_KEY'], ['nvidia', 'NVIDIA_API_KEY'], ['openai', 'OPENAI_API_KEY']];
+    const errs = [];
+    for (const [prov, keyName] of order) {
+      const k = await config.get(keyName);
+      if (!k) continue;
+      try { result = await runNvidia(k, messages, tools, body.voice === true, deepFlag, prov); break; }
+      catch (err) { errs.push(prov + ': ' + String(err && err.message || err).slice(0, 140)); }
     }
+    if (!result && errs.length) { nvErr = new Error('All AI providers failed. ' + errs.join(' | ')); throw nvErr; }
+    if (!result) lastErr = new Error('No AI key is set. Add a free GROQ_API_KEY or GEMINI_API_KEY on the project Setup page.');
     if (!result) {
     for (const model of ['gpt-mini', 'haiku', 'gemini-flash']) {
       try {
