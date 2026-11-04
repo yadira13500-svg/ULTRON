@@ -28,6 +28,7 @@ const PROV = {
   groq: { url: 'https://api.groq.com/openai/v1/chat/completions', models: true, fast: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'], big: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile'] },
   gemini: { url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', models: true, fast: ['gemini-2.0-flash', 'gemini-2.5-flash'], big: ['gemini-2.5-flash', 'gemini-2.0-flash'] },
   openai: { url: 'https://api.openai.com/v1/chat/completions', models: true, fast: ['gpt-4.1-mini', 'gpt-4o-mini'], big: ['gpt-4.1', 'gpt-4o', 'gpt-4.1-mini'] },
+  tokenharbor: { url: 'https://tokenharbor.ai/v1/chat/completions', models: true, fast: [], big: [] },
   nvidia: { url: 'https://integrate.api.nvidia.com/v1/chat/completions', models: false }
 };
 async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia') {
@@ -193,7 +194,7 @@ export default async function (req, res) {
   try {
     let result, lastErr, nvErr;
     const deepFlag = body.deep === true || (body.voice !== true && ['engineer','legal','wellness','strategist','adaptive'].includes(mode));
-    const order = [['groq', 'GROQ_API_KEY'], ['gemini', 'GEMINI_API_KEY'], ['nvidia', 'NVIDIA_API_KEY'], ['openai', 'OPENAI_API_KEY']];
+    const order = [['groq', 'GROQ_API_KEY'], ['gemini', 'GEMINI_API_KEY'], ['nvidia', 'NVIDIA_API_KEY'], ['tokenharbor', 'TOKENHARBOR_API_KEY'], ['openai', 'OPENAI_API_KEY']];
     const errs = [];
     for (const [prov, keyName] of order) {
       const k = await config.get(keyName);
