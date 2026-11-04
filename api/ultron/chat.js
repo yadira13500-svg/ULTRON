@@ -162,7 +162,9 @@ export default async function (req, res) {
     const nvKey = await config.get('NVIDIA_API_KEY');
     if (nvKey) {
       try { result = await runNvidia(nvKey, messages, tools, body.voice === true); }
-      catch (err) { nvErr = err; }
+      catch (err) { nvErr = err; throw new Error('NVIDIA request failed: ' + String(err && err.message || err).slice(0, 300)); }
+    } else {
+      lastErr = new Error('NVIDIA_API_KEY is not set or not readable by this project. Paste it on the project Setup page.');
     }
     if (!result) {
     for (const model of ['gpt-mini', 'haiku', 'gemini-flash']) {
