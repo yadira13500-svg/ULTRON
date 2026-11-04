@@ -55,7 +55,7 @@ async function getSettings(owner) {
 
 async function keys() {
   const groq = await config.get('GROQ_API_KEY');
-  const openai = await config.get('OPENAI_API_KEY');
+  const openai = (await config.get('USE_OPENAI_VOICE')) === 'true' ? await config.get('OPENAI_API_KEY') : null;
   return { groq: groq || null, openai: openai || null };
 }
 
