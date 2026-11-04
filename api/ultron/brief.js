@@ -20,6 +20,7 @@ export default async function (req, res) {
     return res.json({ brief: null, generated: false });
   }
   const tasks = (await db.query("SELECT kind, title, due_at FROM ultron_items WHERE owner_id = $1 AND status = 'open' AND kind IN ('task','reminder','goal') ORDER BY due_at NULLS LAST, created_at ASC LIMIT 30", [owner])).rows;
+  const routines = settings.memory_enabled ? (await db.query("SELECT content FROM ultron_memories WHERE owner_id = $1 AND category = 'routine' ORDER BY updated_at DESC LIMIT 10", [owner])).rows.map(x => x.content) : [];
   let events = [], calendarConnected = true;
   try {
     const now = new Date();
@@ -27,7 +28,7 @@ export default async function (req, res) {
     const r = await api.google_calendar.get('/calendar/v3/calendars/primary/events', { query: { timeMin: now.toISOString(), timeMax: end.toISOString(), singleEvents: true, orderBy: 'startTime', maxResults: 20 } });
     events = (r.body?.items || []).map(e => ({ title: e.summary || 'Untitled event', start: e.start?.dateTime || e.start?.date || '', end: e.end?.dateTime || e.end?.date || '' }));
   } catch { calendarConnected = false; }
-  const context = 'Open tasks and goals: ' + JSON.stringify(tasks) + '\nCalendar events in the next 24 hours: ' + JSON.stringify(events);
+  const context = 'Open tasks and goals: ' + JSON.stringify(tasks) + '\nSaved personal routines: ' + JSON.stringify(routines) + '\nCalendar events in the next 24 hours: ' + JSON.stringify(events);
   let content;
   if (settings.ai_enabled) {
     try {
@@ -40,7 +41,7 @@ export default async function (req, res) {
   }
   if (!content) {
     const priority = tasks.filter(t => t.kind !== 'goal').slice(0, 5);
-    content = 'TODAY\n' + (events.length ? 'Calendar: ' + events.map(e => e.start + ' — ' + e.title).join('; ') : (calendarConnected ? 'No calendar events found in the next 24 hours.' : 'Calendar is not connected yet.')) + '\n\nPRIORITIES\n' + (priority.length ? priority.map((t,i) => (i+1) + '. ' + t.title).join('\n') : 'Your task list is clear. Choose one meaningful outcome for today.') + '\n\nKeep the plan realistic: handle fixed commitments first, then one important task at a time, with breaks between focus blocks.';
+    content = 'TODAY\n' + (events.length ? 'Calendar: ' + events.map(e => e.start + ' — ' + e.title).join('; ') : (calendarConnected ? 'No calendar events found in the next 24 hours.' : 'Calendar is not connected yet.')) + '\n\nPRIORITIES\n' + (priority.length ? priority.map((t,i) => (i+1) + '. ' + t.title).join('\n') : 'Your task list is clear. Choose one meaningful outcome for today.') + (routines.length ? '\n\nPERSONAL ROUTINES\n' + routines.map(x => '• ' + x).join('\n') : '') + '\n\nKeep the plan realistic: handle fixed commitments first, then one important task at a time, with breaks between focus blocks.';
   }
   await db.query('INSERT INTO ultron_briefs (owner_id, brief_date, content) VALUES ($1, $2::date, $3) ON CONFLICT (owner_id, brief_date) DO UPDATE SET content = EXCLUDED.content, created_at = now()', [owner, date, content]);
   return res.json({ brief: { brief_date: date, content }, generated: true, calendar_connected: calendarConnected });

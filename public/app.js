@@ -53,7 +53,9 @@ async function voiceCommand(q){
    const data=await req('/items','POST',{kind:wantsReminder?'reminder':'task',title,due_at:due});await loadItems();
    return (wantsReminder?'Reminder':'Task')+' saved: '+data.item.title+(due?' for '+new Date(due).toLocaleString():'')+'.';
  }
- const mem=s.match(/^(remember that|remember this|save to memory)\\s+(.+)/i);
+ const routine=s.match(/^(?:save|remember)(?: my)? routine\s*:?\s*(.+)/i);
+ if(routine){await req('/memory','POST',{category:'routine',content:routine[1]});await loadMemories();return 'I saved that as one of your personal routines. I will include it in your daily plan.'}
+ const mem=s.match(/^(remember that|remember this|save to memory)\s+(.+)/i);
  if(mem){await req('/memory','POST',{category:'voice note',content:mem[2]});await loadMemories();return 'I saved that to your private memory.'}
  return null;
 }
