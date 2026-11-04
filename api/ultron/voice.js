@@ -85,6 +85,7 @@ export default async function (req, res) {
       return res.json({ stt: true, tts: !!k.openai, reason: 'ok', stt_provider: k.groq ? 'groq' : 'openai' });
     }
     try {
+      return res.json({ stt: false, tts: false, reason: 'free_mode' });
       const r = await ai.fetch({ provider: 'openai', path: '/v1/models', method: 'GET', purpose: 'ultron-voice-check' });
       if (r && r.ok) return res.json({ stt: true, tts: true, reason: 'ok', stt_provider: 'platform' });
       return res.json({ stt: false, tts: false, reason: 'ai_setup_required' });
