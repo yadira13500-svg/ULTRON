@@ -49,3 +49,13 @@ $('#journalForm').addEventListener('submit',async e=>{e.preventDefault();const b
 async function loadHistory(){try{const r=await req('/history?conversation_id='+encodeURIComponent(conversationId));if(r.messages?.length){$('#chat').innerHTML='';r.messages.forEach(m=>bubble(m.content,m.role==='user'?'user':'bot'))}}catch{}}
 $('#newChat').addEventListener('click',()=>{conversationId=crypto.randomUUID();localStorage.setItem('ultron_conversation_id',conversationId);$('#chat').innerHTML='';bubble('New conversation started. What should we work on?','bot')});
 time();setInterval(time,30000);showLesson();Promise.all([loadItems(),loadSettings()]).then(()=>Promise.all([loadBrief(),loadActions(),loadMemories(),loadIntegrations(),loadHistory()]));
+let installPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;$('#installApp').hidden=false;});
+if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));
+$('#installApp').addEventListener('click',async()=>{
+ if(window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone){toast('ULTRON is already installed on this device.');return;}
+ if(installPrompt){installPrompt.prompt();const choice=await installPrompt.userChoice;installPrompt=null;if(choice?.outcome==='accepted')toast('ULTRON is being added to your device.');return;}
+ const isApple=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+ if(isApple){alert('To install ULTRON on your iPhone: open this page in Safari, tap the Share button, choose “Add to Home Screen”, turn on “Open as Web App”, then tap Add.');return;}
+ alert('Use your browser menu and choose “Install app” or “Add to Home Screen”.');
+});
