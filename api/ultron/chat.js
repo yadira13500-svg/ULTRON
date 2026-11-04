@@ -22,16 +22,23 @@ function safePublicUrl(value) {
 }
 
 async function runNvidia(key, messages, tools, voice) {
-  const model = (await config.get('NVIDIA_MODEL')) || 'meta/llama-3.3-70b-instruct';
+  const pinned = await config.get('NVIDIA_MODEL');
+  let candidates = [pinned, 'nvidia/nemotron-3-super-120b-a12b', 'nvidia/llama-3.3-nemotron-super-49b-v1.5', 'nvidia/nemotron-3-nano-30b-a3b', 'meta/llama-4-maverick-17b-128e-instruct', 'qwen/qwen3-235b-a22b'].filter(Boolean);
   const defs = Object.entries(tools).map(([name, t]) => ({ type: 'function', function: { name, description: t.description, parameters: t.inputSchema } }));
   const convo = messages.map(m => ({ role: m.role, content: String(m.content ?? '') }));
   for (let step = 0; step < 6; step++) {
-    const r = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages: convo, tools: defs, tool_choice: 'auto', temperature: 0.5, max_tokens: voice ? 600 : 2000 })
-    });
-    if (!r.ok) throw new Error('NVIDIA API ' + r.status + ': ' + (await r.text()).slice(0, 200));
+    let r, failText = '';
+    for (const model of candidates) {
+      r = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, messages: convo, tools: defs, tool_choice: 'auto', temperature: 0.5, max_tokens: voice ? 600 : 2000 })
+      });
+      if (r.ok) { candidates = [model]; break; }
+      failText = model + ' -> ' + r.status + ': ' + (await r.text()).slice(0, 160);
+      if (![400, 404, 410, 422].includes(r.status)) break;
+    }
+    if (!r.ok) throw new Error('NVIDIA API ' + failText);
     const data = await r.json();
     const msg = data.choices && data.choices[0] && data.choices[0].message;
     if (!msg) throw new Error('NVIDIA returned no message.');
