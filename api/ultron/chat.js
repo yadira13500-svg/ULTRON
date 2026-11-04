@@ -175,6 +175,36 @@ export default async function (req, res) {
         return { results: (data.results || []).slice(0, 5).map(x => ({ title: x.title, url: x.url, snippet: x.content, score: x.score })) };
       }
     },
+    getWeather: {
+      description: 'Get current weather and a 3-day forecast for any place using the free Open-Meteo service (no key needed).',
+      inputSchema: { type: 'object', properties: { place: { type: 'string' } }, required: ['place'] },
+      execute: async ({ place }) => {
+        if (!place || place.length > 120) return { error: 'Invalid place.' };
+        const g = await fetch('https://geocoding-api.open-meteo.com/v1/search?count=1&name=' + encodeURIComponent(place));
+        if (!g.ok) return { error: 'Place lookup failed.' };
+        const loc = ((await g.json()).results || [])[0];
+        if (!loc) return { error: 'Could not find that place.' };
+        const w = await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + loc.latitude + '&longitude=' + loc.longitude + '&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=3');
+        if (!w.ok) return { error: 'Weather service unavailable.' };
+        const d = await w.json();
+        return { place: [loc.name, loc.admin1, loc.country].filter(Boolean).join(', '), current: d.current, daily: d.daily, units: { temp: '°C', wind: 'km/h' }, weather_code_note: 'WMO weather code' };
+      }
+    },
+    wikipedia: {
+      description: 'Look up a clear factual summary of a topic, person or place from Wikipedia (free, no key).',
+      inputSchema: { type: 'object', properties: { topic: { type: 'string' } }, required: ['topic'] },
+      execute: async ({ topic }) => {
+        if (!topic || topic.length > 150) return { error: 'Invalid topic.' };
+        const s = await fetch('https://en.wikipedia.org/w/rest.php/v1/search/page?limit=1&q=' + encodeURIComponent(topic));
+        if (!s.ok) return { error: 'Wikipedia search failed.' };
+        const hit = ((await s.json()).pages || [])[0];
+        if (!hit) return { error: 'No Wikipedia article found.' };
+        const r = await fetch('https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(hit.key));
+        if (!r.ok) return { error: 'Could not read the article.' };
+        const j = await r.json();
+        return { title: j.title, summary: String(j.extract || '').slice(0, 2500), url: j.content_urls && j.content_urls.desktop && j.content_urls.desktop.page };
+      }
+    },
     readWebPage: {
       description: 'Read a public web page URL returned by searchWeb. Do not access private networks, localhost, login pages or account dashboards.',
       inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
