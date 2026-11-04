@@ -103,7 +103,7 @@ $('#newsCategory').addEventListener('change',loadNews);
 time();setInterval(time,30000);showLesson();Promise.all([loadItems(),loadSettings()]).then(()=>Promise.all([loadBrief(),loadActions(),loadMemories(),loadIntegrations(),loadHistory(),loadNews()])).then(refreshMissionControl);
 setInterval(()=>{if(document.visibilityState==='visible')loadNews()},15*60*1000);
 $('#copySiriPrefix').addEventListener('click',async()=>{const value='https://ultron-ptje.hatchable.site/#siri=';try{await navigator.clipboard.writeText(value);$('#siriStatus').textContent='Link prefix copied. Paste it into the Text action, then insert the encoded-text variable after the equals sign.'}catch{$('#siriStatus').textContent=value}});
-$('#siriSpeakLast').addEventListener('click',()=>{if(!lastReplyText){toast('Ask ULTRON something first.');return;}speak(lastReplyText,()=>{$('#siriStatus').textContent='ULTRON finished speaking.'})});
+$('#siriSpeakLast').addEventListener('click',()=>{const hadReply=Boolean(lastReplyText);const text=lastReplyText||'Hello. I am ULTRON. Your voice output is working. Use the Talk to ULTRON shortcut to send me a command.';lastReplyText=text;$('#siriStatus').textContent=hadReply?'Playing the latest ULTRON reply.':'Playing the ULTRON voice test.';speak(text,()=>{$('#siriStatus').textContent='ULTRON finished speaking.'})});
 const siriHash=window.location.hash;
 if(siriHash.startsWith('#siri=')){
  const raw=siriHash.slice(6);
