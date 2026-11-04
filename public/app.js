@@ -24,18 +24,18 @@ function localReply(q){const s=q.toLowerCase();let m=mode;if(mode==='adaptive')m
 let voiceBusy=false,voiceRestartTimer=null;
 function speak(t,onend){if(!('speechSynthesis'in window)){if(onend)onend();return}window.speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang=navigator.language||'en-US';u.rate=0.96;u.pitch=1;u.volume=1;u.onend=()=>{if(onend)onend()};u.onerror=()=>{if(onend)onend()};window.speechSynthesis.speak(u)}
 async function voiceCommand(q){
- let s=q.replace(/^(hey|okay|ok)?\\s*ultron[,:]?\\s*/i,'').trim();
+ let s=q.replace(/^(hey|okay|ok)?\s*ultron[,:]?\s*/i,'').trim();
  if(!s||/^hello$|^are you there$/i.test(s))return "I'm here. What would you like me to do?";
  if(/^(stop listening|stop voice|turn off voice)$/i.test(s)){voiceLoop=false;$('#voiceConversation').textContent='Start voice conversation';$('#voiceConversation').setAttribute('aria-pressed','false');if(recognition){try{recognition.stop()}catch{}recognition=null}return 'Voice listening stopped.'}
  if(/^(prepare|plan) my day|^what('s| is) on my schedule/i.test(s)){const r=await req('/brief','POST',{});$('#briefText').textContent=r.brief.content;$('#briefMeta').textContent='Prepared just now · '+(r.calendar_connected===false?'Calendar not connected':'Calendar checked');return 'Your day plan is ready. '+r.brief.content.slice(0,650)}
  if(/^(read|show|list) my tasks|what are my tasks/i.test(s)){await loadItems();const open=items.filter(x=>['task','reminder'].includes(x.kind)&&x.status==='open');return open.length?'You have '+open.length+' open items: '+open.slice(0,8).map((x,i)=>(i+1)+'. '+x.title).join('; '):'You have no open tasks or reminders.'}
- const wantsReminder=/\\bremind me\\b|\\breminder\\b/i.test(s), wantsTask=/\\b(add|create|make) (a )?(task|to-do)\\b/i.test(s);
+ const wantsReminder=/\bremind me\b|\breminder\b/i.test(s), wantsTask=/\b(add|create|make) (a )?(task|to-do)\b/i.test(s);
  if(wantsReminder||wantsTask){
-   let title=s.replace(/^(please )?(remind me to|remind me|add (a )?task to|add (a )?task|create (a )?task to|create (a )?task|make (a )?task to)\\s*/i,'').trim();
+   let title=s.replace(/^(please )?(remind me to|remind me|add (a )?task to|add (a )?task|create (a )?task to|create (a )?task|make (a )?task to)\s*/i,'').trim();
    let due=null;const now=new Date();let dayOffset=0;
-   if(/\\btomorrow\\b/i.test(title)){dayOffset=1;title=title.replace(/\\btomorrow\\b/i,'')}
-   else if(/\\btoday\\b/i.test(title)){title=title.replace(/\\btoday\\b/i,'')}
-   const tm=title.match(/\\bat (\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?\\b/i);
+   if(/\btomorrow\b/i.test(title)){dayOffset=1;title=title.replace(/\btomorrow\b/i,'')}
+   else if(/\btoday\b/i.test(title)){title=title.replace(/\btoday\b/i,'')}
+   const tm=title.match(/\bat (\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
    if(tm){let h=Number(tm[1]),m=Number(tm[2]||0);if(tm[3]?.toLowerCase()==='pm'&&h<12)h+=12;if(tm[3]?.toLowerCase()==='am'&&h===12)h=0;if(!tm[3]&&h<=7)h+=12;if(h<24&&m<60){const d=new Date(now);d.setDate(d.getDate()+dayOffset);d.setHours(h,m,0,0);due=d.toISOString()}title=title.replace(tm[0],'')}
    title=title.replace(/[,.!?]+$/,'').trim();
    if(!title)return 'What should I add as the task or reminder?';
