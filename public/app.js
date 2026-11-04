@@ -108,7 +108,7 @@ const siriHash=window.location.hash;
 if(siriHash.startsWith('#siri=')){
  const raw=siriHash.slice(6);
  history.replaceState(null,'',window.location.pathname+window.location.search);
- let dictated='';try{dictated=decodeURIComponent(raw).trim()}catch{dictated=raw.trim()}
+ let dictated='';try{dictated=decodeURIComponent(raw.replace(/\+/g,' ')).trim()}catch{dictated=raw.replace(/\+/g,' ').trim()}
  if(dictated){$('#siriStatus').textContent='Siri delivered your request. ULTRON is preparing a reply.';$('#message').value=dictated;Promise.all([loadItems(),loadSettings()]).then(()=>sendMessage(dictated,true))}
 }
 let installPrompt=null;
