@@ -42,8 +42,8 @@ function classify(e) {
   if (e?.error_code === 'ai_spend_limit_reached' || /spend.limit/i.test(msg)) {
     return { status: 429, code: 'ai_spend_limit_reached', error: 'The project AI spend limit has been reached for today.' };
   }
-  if (/412|setup_required|No openai key|not configured|fixed request schema|not allowed on our key/i.test(msg)) {
-    return { status: 412, code: 'ai_setup_required', error: 'ULTRON voice needs a Groq or OpenAI key in Hatchable Setup (GROQ_API_KEY or OPENAI_API_KEY).' };
+  if (/412|setup_required|No openai key|not configured|fixed request schema|not allowed on our key|insufficient_quota|no credits|incorrect api key|invalid_api_key|\b401\b|\b402\b|\b429\b/i.test(msg)) {
+    return { status: 412, code: 'ai_setup_required', error: 'The voice key has no credits or is invalid, so ULTRON is using free device voice instead. For free hearing, add GROQ_API_KEY in Hatchable Setup.' };
   }
   return { status: 502, code: 'voice_provider_error', error: 'Voice provider error: ' + msg.slice(0, 200) };
 }
@@ -107,9 +107,12 @@ export default async function (req, res) {
     const ext = /mp4|m4a|aac/.test(mime) ? 'm4a' : /ogg/.test(mime) ? 'ogg' : /wav/.test(mime) ? 'wav' : /mpeg|mp3/.test(mime) ? 'mp3' : 'webm';
     try {
       if (k.groq || k.openai) {
-        const text = k.groq
-          ? await transcribeDirect('groq', k.groq, audioB64, mime, ext)
-          : await transcribeDirect('openai', k.openai, audioB64, mime, ext);
+        let text = null, lastE = null;
+        for (const [p, key] of [['groq', k.groq], ['openai', k.openai]]) {
+          if (!key) continue;
+          try { text = await transcribeDirect(p, key, audioB64, mime, ext); break; } catch (e) { lastE = e; }
+        }
+        if (text === null) throw lastE;
         return res.json({ text });
       }
       const r = await ai.fetch({
