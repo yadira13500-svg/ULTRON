@@ -21,6 +21,35 @@ function safePublicUrl(value) {
   } catch { return null; }
 }
 
+async function runNvidia(key, messages, tools, voice) {
+  const model = (await config.get('NVIDIA_MODEL')) || 'meta/llama-3.3-70b-instruct';
+  const defs = Object.entries(tools).map(([name, t]) => ({ type: 'function', function: { name, description: t.description, parameters: t.inputSchema } }));
+  const convo = messages.map(m => ({ role: m.role, content: String(m.content ?? '') }));
+  for (let step = 0; step < 6; step++) {
+    const r = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages: convo, tools: defs, tool_choice: 'auto', temperature: 0.5, max_tokens: voice ? 600 : 2000 })
+    });
+    if (!r.ok) throw new Error('NVIDIA API ' + r.status + ': ' + (await r.text()).slice(0, 200));
+    const data = await r.json();
+    const msg = data.choices && data.choices[0] && data.choices[0].message;
+    if (!msg) throw new Error('NVIDIA returned no message.');
+    const calls = msg.tool_calls || [];
+    if (!calls.length) return { text: msg.content || '', usage: data.usage || null, steps: step };
+    convo.push({ role: 'assistant', content: msg.content || '', tool_calls: calls });
+    for (const c of calls) {
+      let out;
+      try {
+        const t = tools[c.function.name];
+        out = t ? await t.execute(JSON.parse(c.function.arguments || '{}')) : { error: 'Unknown tool.' };
+      } catch (e) { out = { error: String(e && e.message || e).slice(0, 200) }; }
+      convo.push({ role: 'tool', tool_call_id: c.id, content: JSON.stringify(out).slice(0, 6000) });
+    }
+  }
+  return { text: 'I ran out of steps before finishing. Try a simpler request.', usage: null, steps: 6 };
+}
+
 export default async function (req, res) {
   const owner = String(req.member.id);
   const body = req.body || {};
@@ -129,7 +158,13 @@ export default async function (req, res) {
   };
 
   try {
-    let result, lastErr;
+    let result, lastErr, nvErr;
+    const nvKey = await config.get('NVIDIA_API_KEY');
+    if (nvKey) {
+      try { result = await runNvidia(nvKey, messages, tools, body.voice === true); }
+      catch (err) { nvErr = err; }
+    }
+    if (!result) {
     for (const model of ['gpt-mini', 'haiku', 'gemini-flash']) {
       try {
         result = await ai.generateText({ model, purpose: 'ultron-chat', userId: owner, messages, tools, maxSteps: 7, maxTokens: body.voice === true ? 600 : 2400 });
@@ -140,7 +175,8 @@ export default async function (req, res) {
         if (!(err?.code === 'SetupRequired' || /setup_required|provider key|not configured|No \w+ key/i.test(m))) throw err;
       }
     }
-    if (!result) throw lastErr;
+    }
+    if (!result) throw (nvErr || lastErr);
     const reply = result.text || 'I could not produce a response. Please try again.';
     if (settings.memory_enabled) await db.query('INSERT INTO ultron_messages (owner_id, conversation_id, role, content) VALUES ($1, $2, $3, $4)', [owner, conversationId, 'assistant', reply]);
     return res.json({ reply, conversation_id: conversationId, usage: result.usage || null, steps: result.steps || [] });

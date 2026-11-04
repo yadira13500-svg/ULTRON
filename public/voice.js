@@ -247,6 +247,7 @@ function pickVoice() {
   const en = vs.filter(v => /^en/i.test(v.lang));
   const prefs = [/daniel/i, /google uk english male/i, /microsoft (guy|ryan|david|mark|george)/i, /\balex\b/i, /aaron/i, /arthur/i, /oliver/i, /\bfred\b/i, /\bmale\b/i];
   for (const p of prefs) { const v = en.find(x => p.test(x.name)); if (v) return v; }
+  const gb = en.find(x => /en[-_]GB/i.test(x.lang)); if (gb) return gb;
   return en[0] || vs[0];
 }
 if ('speechSynthesis' in window) { speechSynthesis.onvoiceschanged = () => { V.voice = pickVoice(); }; V.voice = pickVoice(); }
@@ -287,7 +288,7 @@ function speakBrowser(text, finish) {
     const u = new SpeechSynthesisUtterance(parts[i++]);
     const v = V.voice || pickVoice();
     if (v) { u.voice = v; u.lang = v.lang; } else u.lang = navigator.language || 'en-US';
-    u.rate = 0.9; u.pitch = 0.6; u.volume = 1;
+    u.rate = 1.0; u.pitch = 0.85; u.volume = 1;
     u.onstart = () => { started = true; };
     u.onend = next; u.onerror = () => { if (V.curFinish === finish) next(); };
     speechSynthesis.speak(u);
@@ -415,5 +416,49 @@ window.addEventListener('pagehide', closeMic);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && voiceLoop && !voiceBusy && !recognition) scheduleRestart(400);
 });
+/* ---------- Jarvis core button: one tap starts a hands-free conversation, tap again to stop ---------- */
+let wakeLockSentinel = null;
+async function holdScreen() { try { if ('wakeLock' in navigator) wakeLockSentinel = await navigator.wakeLock.request('screen'); } catch {} }
+function releaseScreen() { try { if (wakeLockSentinel) wakeLockSentinel.release(); } catch {} wakeLockSentinel = null; }
+function setLoopUI(on) {
+  voiceLoop = !!on;
+  const b = q('#voiceConversation');
+  if (b) { b.textContent = on ? 'Stop voice conversation' : 'Start voice conversation'; b.setAttribute('aria-pressed', String(!!on)); b.classList.toggle('voice-active', !!on); }
+}
+function endConversation(msg) {
+  V.session++; if (V.stopRec) V.stopRec();
+  if (recognition && typeof recognition.stop === 'function') { try { recognition.stop(); } catch {} }
+  recognition = null;
+  if (voiceRestartTimer) { clearTimeout(voiceRestartTimer); voiceRestartTimer = null; }
+  voiceBusy = false; setLoopUI(false); closeMic(); stopSpeaking(); releaseScreen();
+  const c = core(); if (c) c.classList.remove('listening');
+  setStatus(msg || 'Voice conversation ended.');
+}
+function greetingLine() {
+  const h = new Date().getHours();
+  const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+  return part + '. ULTRON online. ' + (settings && settings.ai_enabled ? 'I am listening. How may I assist you?' : 'My language core is offline, so I can only run direct commands. Tap Enable AI in the controls to unlock full conversation. What is the objective?');
+}
+const talkBtn = (() => { const o = core(); if (!o) return null; const n = o.cloneNode(true); o.replaceWith(n); return n; })();
+if (talkBtn) {
+  talkBtn.addEventListener('click', e => {
+    e.preventDefault();
+    unlock();
+    if (voiceLoop || recognition || V.curFinish) { endConversation('Standing by. Tap the core to talk.'); return; }
+    if (wakeWordMode) { wakeWordMode = false; const w = q('#wakeWordToggle'); if (w) { w.textContent = 'Enable \u201cHey ULTRON\u201d'; w.setAttribute('aria-pressed', 'false'); } }
+    setLoopUI(true); voiceBusy = false; holdScreen();
+    setStatus('ULTRON online');
+    window.speak(greetingLine(), () => { if (voiceLoop) window.startRecognition(true); });
+  });
+  const label = talkBtn.querySelector('em');
+  const syncLabel = () => {
+    if (!label) return;
+    label.textContent = talkBtn.classList.contains('listening') ? 'LISTENING\u2026' : talkBtn.classList.contains('speaking') ? 'SPEAKING\u2026' : voiceLoop ? 'ACTIVE \u00b7 TAP TO STOP' : 'TAP TO TALK';
+  };
+  new MutationObserver(syncLabel).observe(talkBtn, { attributes: true, attributeFilter: ['class'] });
+  setInterval(syncLabel, 1000);
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && voiceLoop) holdScreen(); });
+
 setTimeout(() => probe(true), 2500);
 })();
