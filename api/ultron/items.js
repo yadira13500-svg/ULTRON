@@ -1,7 +1,7 @@
 import { db } from 'hatchable';
 
 export const access = 'member';
-export const methods = ['GET', 'POST', 'PATCH', 'DELETE'];
+export const methods = ['GET', 'POST', 'PUT', 'DELETE'];
 
 export default async function (req, res) {
   const owner = String(req.member.id);
@@ -22,7 +22,7 @@ export default async function (req, res) {
     const { rows } = await db.query('INSERT INTO ultron_items (owner_id, kind, title, body, due_at) VALUES ($1, $2, $3, $4, $5) RETURNING id, kind, title, body, status, due_at, created_at', [owner, kind, title.trim().slice(0,180), String(body).slice(0,12000), due_at || null]);
     return res.status(201).json({ item: rows[0] });
   }
-  if (req.method === 'PATCH') {
+  if (req.method === 'PUT') {
     const { id, status } = req.body || {};
     if (!id || !['open','done','archived'].includes(status)) return res.status(400).json({ error: 'An item id and valid status are required.' });
     const { rows } = await db.query('UPDATE ultron_items SET status = $3, updated_at = now() WHERE id = $1 AND owner_id = $2 RETURNING id, kind, title, body, status, due_at, created_at', [id, owner, status]);
