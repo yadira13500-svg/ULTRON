@@ -1,1 +1,39 @@
 name = "ULTRON"
+
+[ai]
+required = false
+description = "Optional conversational intelligence. ULTRON does not call a model until its owner explicitly enables the AI brain in the app."
+
+[[api]]
+name = "google_calendar"
+auth = "oauth2"
+base_url = "https://www.googleapis.com"
+authorize_url = "https://accounts.google.com/o/oauth2/v2/auth"
+token_url = "https://oauth2.googleapis.com/token"
+scopes = ["https://www.googleapis.com/auth/calendar.events"]
+required = false
+description = "ULTRON reads your calendar and creates events only after you approve a proposed event."
+
+[[api]]
+name = "gmail_read"
+auth = "oauth2"
+base_url = "https://gmail.googleapis.com"
+authorize_url = "https://accounts.google.com/o/oauth2/v2/auth"
+token_url = "https://oauth2.googleapis.com/token"
+scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
+required = false
+description = "Read-only Gmail access for inbox summaries and preparation."
+
+[[api]]
+name = "gmail_compose"
+auth = "oauth2"
+base_url = "https://gmail.googleapis.com"
+authorize_url = "https://accounts.google.com/o/oauth2/v2/auth"
+token_url = "https://oauth2.googleapis.com/token"
+scopes = ["https://www.googleapis.com/auth/gmail.compose"]
+required = false
+description = "Create Gmail drafts after you approve them. ULTRON never sends email automatically."
+
+[[cron]]
+path = "/api/ultron/jobs/daily-brief"
+schedule = "0 * * * *"
