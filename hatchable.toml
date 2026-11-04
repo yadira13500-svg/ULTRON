@@ -1,5 +1,10 @@
 name = "ULTRON"
 
+[[secret]]
+name = "TAVILY_API_KEY"
+required = false
+description = "Optional Tavily search key for ULTRON web research. Tavily currently includes a free monthly credit allowance."
+
 [ai]
 required = false
 description = "Optional conversational intelligence. ULTRON does not call a model until its owner explicitly enables the AI brain in the app."
@@ -10,7 +15,7 @@ auth = "oauth2"
 base_url = "https://www.googleapis.com"
 authorize_url = "https://accounts.google.com/o/oauth2/v2/auth"
 token_url = "https://oauth2.googleapis.com/token"
-scopes = ["https://www.googleapis.com/auth/calendar.events"]
+scopes = ["https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/calendar.events.owned"]
 required = false
 description = "ULTRON reads your calendar and creates events only after you approve a proposed event."
 

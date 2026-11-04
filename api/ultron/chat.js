@@ -1,4 +1,4 @@
-import { ai, db, browser } from 'hatchable';
+import { ai, db, browser, config } from 'hatchable';
 
 export const access = 'admin';
 export const methods = ['POST'];
@@ -64,6 +64,7 @@ export default async function (req, res) {
       description: 'Save a personal fact, preference or project detail only when the user explicitly says remember this, save this, or asks you to keep it in memory.',
       inputSchema: { type: 'object', properties: { category: { type: 'string' }, content: { type: 'string' } }, required: ['category','content'] },
       execute: async ({ category, content }) => {
+        if (!settings.memory_enabled) return { error: 'Long-term memory is switched off in ULTRON controls.' };
         if (!content || content.length > 3000) return { error: 'Memory is too long.' };
         const r = await db.query('INSERT INTO ultron_memories (owner_id, category, content, source) VALUES ($1, $2, $3, $4) RETURNING id', [owner, String(category || 'general').slice(0,40), content, 'conversation']);
         return { saved: true, memoryId: r.rows[0].id };
@@ -95,10 +96,12 @@ export default async function (req, res) {
       inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
       execute: async ({ query }) => {
         if (!query || query.length > 300) return { error: 'Search query is too long.' };
-        return await browser.session(async page => {
-          await page.goto('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query), { waitUntil: 'domcontentloaded' });
-          return await page.$$eval('.result', rows => rows.slice(0, 6).map(row => ({ title: row.querySelector('.result__a')?.textContent?.trim() || '', url: row.querySelector('.result__a')?.href || '', snippet: row.querySelector('.result__snippet')?.textContent?.trim() || '' })).filter(x => x.title && x.url));
-        });
+        const key = await config.get('TAVILY_API_KEY');
+        if (!key) return { error: 'Web research is not connected yet. Add a Tavily API key in the ULTRON project Setup page. No paid search fallback was attempted.' };
+        const r = await fetch('https://api.tavily.com/search', { method: 'POST', headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' }, body: JSON.stringify({ query, search_depth: 'basic', max_results: 5, include_answer: false }) });
+        if (!r.ok) return { error: 'Tavily search returned HTTP ' + r.status + '. Check the key and its free-credit limit.' };
+        const data = await r.json();
+        return { results: (data.results || []).slice(0, 5).map(x => ({ title: x.title, url: x.url, snippet: x.content, score: x.score })) };
       }
     },
     readWebPage: {
