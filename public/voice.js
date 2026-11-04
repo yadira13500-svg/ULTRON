@@ -175,7 +175,7 @@ function stopLoop() {
 }
 function noEngine() {
   const msg = (IOS && STANDALONE)
-    ? 'iPhone Home Screen apps cannot use browser speech recognition. Open ULTRON in Safari for live listening — or enable the AI brain with an OpenAI key so ULTRON can hear you with Whisper. For now, tap the text box and use the microphone key on your iPhone keyboard.'
+    ? 'Home Screen mode needs a Whisper key to hear you: add GROQ_API_KEY (or OPENAI_API_KEY) in Hatchable Setup and keep AI enabled. Or open ULTRON in Safari for live listening — or enable the AI brain with an OpenAI key so ULTRON can hear you with Whisper. For now, tap the text box and use the microphone key on your iPhone keyboard.'
     : 'This browser has no live speech recognition. Use Safari or Chrome, or enable the AI brain with an OpenAI key for built-in hearing.';
   setStatus(msg); note('Live listening unavailable here — see the status line.');
   const m = q('#message'); if (m) m.focus();
@@ -355,8 +355,26 @@ async function deterministic(s) {
   if (/^(help|what can you do|what are your commands|list commands|what do you do)$/.test(l)) return 'I can add tasks and reminders, read your tasks, prepare your day, research any topic, read the news headlines, save notes to memory, tell the time and date, and report system status. Connect an AI key and enable the AI brain, and I will also hold full conversations.';
   return null;
 }
+const NAMES = { adaptive: 'Auto expert', engineer: 'Engineer', tech: 'Tech help', wellness: 'Health', legal: 'Legal', companion: 'Companion', strategist: 'Strategist', teacher: 'Teacher' };
+function setDeep(on) {
+  window.ultronDeep = !!on;
+  const b = q('#deepToggle'); if (b) { b.textContent = 'Think harder: ' + (on ? 'on' : 'off'); b.setAttribute('aria-pressed', String(!!on)); b.classList.toggle('voice-active', !!on); }
+}
+const deepBtn = q('#deepToggle'); if (deepBtn) deepBtn.addEventListener('click', () => { setDeep(!window.ultronDeep); note(window.ultronDeep ? 'Think harder is on: bigger model, slower, smarter.' : 'Think harder is off: fast replies.'); });
+function controlCommand(s) {
+  const l = s.toLowerCase().replace(/[.!?,]+$/g, '').trim();
+  if (/\bthink (harder|deeper)\b|\bdeep (thinking )?mode\b|\bbig brain\b/.test(l)) { setDeep(true); return 'Deep thinking engaged. I will be slower but sharper.'; }
+  if (/\b(think (normally|fast|quickly)|normal speed|fast mode|stop thinking harder)\b/.test(l)) { setDeep(false); return 'Back to fast mode.'; }
+  if (l.split(/\s+/).length <= 8 && /\bmode\b|\b(be|become) my\b|\bswitch to\b/.test(l)) {
+    const map = [['engineer', /engineer/], ['tech', /\b(tech|computer|it support)\b/], ['wellness', /\b(health|doctor|wellness)\b/], ['legal', /\b(legal|lawyer)\b/], ['companion', /\b(companion|friend)\b/], ['strategist', /strateg/], ['teacher', /teach/], ['adaptive', /\b(auto|automatic)\b/]];
+    for (const [m, re] of map) if (re.test(l)) { const b = q('[data-mode="' + m + '"]'); if (b) { b.click(); return NAMES[m] + ' mode active.'; } }
+  }
+  return null;
+}
 const origVoiceCommand = window.voiceCommand;
 window.voiceCommand = async function (text) {
+  const s0 = String(text || '').replace(/^(hey|okay|ok)?\s*ultron[,:]?\s*/i, '').trim();
+  const ctl = controlCommand(s0); if (ctl) return ctl;
   const r = await origVoiceCommand(text);
   if (r) return r;
   const s = String(text || '').replace(/^(hey|okay|ok)?\s*ultron[,:]?\s*/i, '').trim();

@@ -6,6 +6,16 @@ required = false
 description = "NVIDIA API key (build.nvidia.com). ULTRON uses it first for conversation, with Llama 3.3 70B."
 
 [[secret]]
+name = "GROQ_API_KEY"
+required = false
+description = "Groq API key (console.groq.com). Lets ULTRON hear you with Whisper, including in the iPhone Home Screen app."
+
+[[secret]]
+name = "OPENAI_API_KEY"
+required = false
+description = "Optional OpenAI key. Enables Whisper hearing and ULTRON's premium deep spoken voice."
+
+[[secret]]
 name = "TAVILY_API_KEY"
 required = false
 description = "Optional Tavily search key for ULTRON web research. Tavily currently includes a free monthly credit allowance."
