@@ -11,7 +11,7 @@ export default async function (req, res) {
     const events = (r.body?.items || []).map(e => ({ id: e.id, title: e.summary || 'Untitled event', start: e.start?.dateTime || e.start?.date || '', end: e.end?.dateTime || e.end?.date || '', link: e.htmlLink || '' }));
     return res.json({ events });
   } catch (e) {
-    if (e?.code === 'SetupRequired') return res.status(412).json({ error: 'Connect Google Calendar in the Hatchable project Setup page.' });
+    if (e?.code === 'SetupRequired' || /not connected|setup_required/i.test(String(e?.message || ''))) return res.status(412).json({ error: 'Connect Google Calendar in the Hatchable project Setup page.' });
     return res.status(502).json({ error: 'Could not read Google Calendar: ' + String(e?.message || e).slice(0,180) });
   }
 }

@@ -15,7 +15,7 @@ export default async function (req, res) {
     }));
     return res.json({ messages });
   } catch (e) {
-    if (e?.code === 'SetupRequired') return res.status(412).json({ error: 'Connect Gmail read access in the Hatchable project Setup page.' });
+    if (e?.code === 'SetupRequired' || /not connected|setup_required/i.test(String(e?.message || ''))) return res.status(412).json({ error: 'Connect Gmail read access in the Hatchable project Setup page.' });
     return res.status(502).json({ error: 'Could not read Gmail: ' + String(e?.message || e).slice(0,180) });
   }
 }
