@@ -17,6 +17,12 @@
   <div id="newsMeta" class="tiny">Free public RSS headlines with publisher links. Refresh to check for updates.</div>
   <div id="newsList" class="newslist"><div class="empty">Loading world headlines…</div></div>
 </div>
+<div class="panel researchpanel">
+  <div class="panelhead"><div><span class="eyebrow">ON-DEMAND RESEARCH</span><h2>Ask ULTRON to research</h2></div><span class="pill">FREE SOURCES</span></div>
+  <form id="researchForm" class="researchrow"><input id="researchQuery" maxlength="240" placeholder="Research a topic, question or event…" required><button class="primary">Research ↗</button></form>
+  <div id="researchMeta" class="tiny">Search public sources without a paid search API key. Coverage varies by source.</div>
+  <div id="researchResults" class="researchlist"></div>
+</div>
 <div class="layout">
 <section class="maincol">
 <div class="panel focus"><div class="panelhead"><div><span class="eyebrow">DAILY COMMAND</span><h2>What matters today?</h2></div><span class="pill">FOCUS</span></div><form id="taskForm" class="addrow"><input id="taskTitle" placeholder="Add a task, reminder or next step…" maxlength="180" required><select id="taskKind" aria-label="Item type"><option value="task">Task</option><option value="reminder">Reminder</option><option value="goal">Goal</option></select><button class="primary">Add</button></form><div id="taskList" class="items"><div class="empty">Loading your day…</div></div></div>
