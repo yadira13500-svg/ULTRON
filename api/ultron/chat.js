@@ -1,4 +1,5 @@
 import { ai, db, browser, config } from 'hatchable';
+import { googleNewsSearch } from 'lib/rss.js';
 
 export const access = 'admin';
 export const methods = ['POST'];
@@ -97,7 +98,14 @@ export default async function (req, res) {
       execute: async ({ query }) => {
         if (!query || query.length > 300) return { error: 'Search query is too long.' };
         const key = await config.get('TAVILY_API_KEY');
-        if (!key) return { error: 'Web research is not connected yet. Add a Tavily API key in the ULTRON project Setup page. No paid search fallback was attempted.' };
+        if (!key) {
+          try {
+            const data = await googleNewsSearch(query, 'US', 8);
+            return { results: data.results.map(x => ({ title: x.title, url: x.url, snippet: x.description, source: x.source, published_at: x.published_at })), note: 'Free public Google News RSS search. Results are news-oriented and may not cover every kind of web page.' };
+          } catch {
+            return { error: 'The free public news search is temporarily unavailable. No paid search fallback was attempted.' };
+          }
+        }
         const r = await fetch('https://api.tavily.com/search', { method: 'POST', headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' }, body: JSON.stringify({ query, search_depth: 'basic', max_results: 5, include_answer: false }) });
         if (!r.ok) return { error: 'Tavily search returned HTTP ' + r.status + '. Check the key and its free-credit limit.' };
         const data = await r.json();

@@ -6,6 +6,17 @@
 <section class="hero"><div><div class="eyebrow">YOUR DAY, WITH A SECOND BRAIN</div><h1 id="greeting">Good morning.</h1><p class="muted">Think clearly. Learn faster. Get things done.</p></div><div class="datebox"><span id="today"></span><strong id="clock"></strong></div></section>
 <section class="stats"><article><span>OPEN TASKS</span><strong id="openCount">—</strong></article><article><span>COMPLETED</span><strong id="doneCount">—</strong></article><article><span>ACTIVE GOALS</span><strong id="goalCount">—</strong></article></section>
 <div class="panel briefpanel"><div class="panelhead"><div><span class="eyebrow">DAILY INTELLIGENCE</span><h2>Your daily brief</h2></div><button id="prepareDay" class="primary">Prepare my day ↗</button></div><div id="briefText" class="brieftext">Your schedule and priorities will appear here. ULTRON can prepare a basic plan without using AI.</div><div class="tiny" id="briefMeta">Daily brief is prepared locally from your saved tasks unless you opt into AI.</div></div>
+<div class="panel newspanel">
+  <div class="panelhead"><div><span class="eyebrow">WORLD MONITOR</span><h2>Live world news</h2></div><button id="refreshNews" class="secondary">Refresh ↻</button></div>
+  <div class="newsfilters">
+    <label class="tiny" for="newsCountry">Country</label>
+    <select id="newsCountry"><option value="US">United States</option><option value="NG">Nigeria</option><option value="GB">United Kingdom</option><option value="CA">Canada</option><option value="IN">India</option><option value="AU">Australia</option><option value="ZA">South Africa</option><option value="GH">Ghana</option><option value="KE">Kenya</option><option value="FR">France</option><option value="DE">Germany</option><option value="JP">Japan</option><option value="BR">Brazil</option><option value="MX">Mexico</option></select>
+    <label class="tiny" for="newsCategory">Topic</label>
+    <select id="newsCategory"><option value="top">Top stories</option><option value="world">World</option><option value="business">Business</option><option value="technology">Technology</option><option value="politics">Politics</option><option value="health">Health</option><option value="sports">Sports</option></select>
+  </div>
+  <div id="newsMeta" class="tiny">Free public RSS headlines with publisher links. Refresh to check for updates.</div>
+  <div id="newsList" class="newslist"><div class="empty">Loading world headlines…</div></div>
+</div>
 <div class="layout">
 <section class="maincol">
 <div class="panel focus"><div class="panelhead"><div><span class="eyebrow">DAILY COMMAND</span><h2>What matters today?</h2></div><span class="pill">FOCUS</span></div><form id="taskForm" class="addrow"><input id="taskTitle" placeholder="Add a task, reminder or next step…" maxlength="180" required><select id="taskKind" aria-label="Item type"><option value="task">Task</option><option value="reminder">Reminder</option><option value="goal">Goal</option></select><button class="primary">Add</button></form><div id="taskList" class="items"><div class="empty">Loading your day…</div></div></div>
