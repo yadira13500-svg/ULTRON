@@ -24,11 +24,12 @@ function safePublicUrl(value) {
   } catch { return null; }
 }
 
-async function runNvidia(key, messages, tools, voice, deep) {
-  const pinned = await config.get('NVIDIA_MODEL');
+async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia') {
+  const OA = provider === 'openai';
+  const pinned = await config.get(OA ? 'OPENAI_MODEL' : 'NVIDIA_MODEL');
   const fast = ['nvidia/nemotron-3.5-lightning-30b-a3b', 'nvidia/nemotron-3.5-bolt-e4b', 'nvidia/nemotron-3-ultra-550b-a55b', 'mistralai/mistral-large-4-1t-a52b'];
   const big = ['nvidia/nemotron-3-ultra-550b-a55b', 'mistralai/mistral-large-4-1t-a52b', 'nvidia/nemotron-3.5-lightning-30b-a3b'];
-  let candidates = [pinned, ...(deep ? big : fast)].filter(Boolean);
+  let candidates = [pinned, ...(OA ? (deep ? ['gpt-4.1', 'gpt-4o', 'gpt-4.1-mini'] : ['gpt-4.1-mini', 'gpt-4o-mini', 'gpt-4.1']) : (deep ? big : fast))].filter(Boolean);
   const lastUser = String([...messages].reverse().find(m => m.role === 'user' && !/^Reference notes saved/.test(String(m.content)))?.content || '');
   let nudged = false;
   const defs = Object.entries(tools).map(([name, t]) => ({ type: 'function', function: { name, description: t.description, parameters: t.inputSchema } }));
@@ -36,10 +37,10 @@ async function runNvidia(key, messages, tools, voice, deep) {
   for (let step = 0; step < 6; step++) {
     let r, failText = '';
     for (const model of candidates) {
-      r = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+      r = await fetch(OA ? 'https://api.openai.com/v1/chat/completions' : 'https://integrate.api.nvidia.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages: convo, tools: defs, tool_choice: 'auto', temperature: 0.5, max_tokens: voice ? 600 : 2000, chat_template_kwargs: { enable_thinking: false } })
+        body: JSON.stringify(Object.assign({ model, messages: convo, tools: defs, tool_choice: 'auto', temperature: 0.6, max_tokens: voice ? 600 : 2000 }, OA ? {} : { chat_template_kwargs: { enable_thinking: false } }))
       });
       if (r.ok) { candidates = [model]; break; }
       failText = model + ' -> ' + r.status + ': ' + (await r.text()).slice(0, 160);
@@ -184,12 +185,14 @@ export default async function (req, res) {
 
   try {
     let result, lastErr, nvErr;
-    const nvKey = await config.get('NVIDIA_API_KEY');
+    const oaKey = await config.get('OPENAI_API_KEY');
+    const nvKey = oaKey || await config.get('NVIDIA_API_KEY');
+    const prov = oaKey ? 'openai' : 'nvidia';
     if (nvKey) {
-      try { result = await runNvidia(nvKey, messages, tools, body.voice === true, body.deep === true || (body.voice !== true && ['engineer','legal','wellness','strategist','adaptive'].includes(mode))); }
-      catch (err) { nvErr = err; throw new Error('NVIDIA request failed: ' + String(err && err.message || err).slice(0, 300)); }
+      try { result = await runNvidia(nvKey, messages, tools, body.voice === true, body.deep === true || (body.voice !== true && ['engineer','legal','wellness','strategist','adaptive'].includes(mode)), prov); }
+      catch (err) { nvErr = err; throw new Error((oaKey ? 'OpenAI' : 'NVIDIA') + ' request failed: ' + String(err && err.message || err).slice(0, 300)); }
     } else {
-      lastErr = new Error('NVIDIA_API_KEY is not set or not readable by this project. Paste it on the project Setup page.');
+      lastErr = new Error('No AI key is set. Add OPENAI_API_KEY on the project Setup page.');
     }
     if (!result) {
     for (const model of ['gpt-mini', 'haiku', 'gemini-flash']) {
