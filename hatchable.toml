@@ -1,6 +1,11 @@
 name = "ULTRON"
 
 [[secret]]
+name = "NVIDIA_API_KEY"
+required = false
+description = "NVIDIA API key (build.nvidia.com). ULTRON uses it first for conversation, with Llama 3.3 70B."
+
+[[secret]]
 name = "TAVILY_API_KEY"
 required = false
 description = "Optional Tavily search key for ULTRON web research. Tavily currently includes a free monthly credit allowance."
