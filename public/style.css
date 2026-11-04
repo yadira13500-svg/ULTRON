@@ -29,7 +29,7 @@ body{background:radial-gradient(ellipse at 52% 4%,rgba(24,92,122,.28),transparen
 .ring-c{inset:25%;border-style:dotted;animation:spin 18s linear infinite}
 .reactor-cross{position:absolute;inset:0;background:linear-gradient(90deg,transparent 49.8%,rgba(93,218,239,.14) 50%,transparent 50.2%),linear-gradient(transparent 49.8%,rgba(93,218,239,.14) 50%,transparent 50.2%);border-radius:50%;mask-image:radial-gradient(circle,transparent 28%,black 29%,black 72%,transparent 73%)}
 .reactor-core{width:112px;height:112px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;border:1px solid #7be7f1;background:radial-gradient(circle at 35% 28%,#2b849c,#102b43 54%,#07121e 78%);box-shadow:0 0 22px #3ad6f466,0 0 65px #2d9bc044,inset 0 0 22px #8bf5ff55;animation:corePulse 3.2s ease-in-out infinite}
-.reactor-core span{font:600 42px 'Space Grotesk';color:#d7fbff;text-shadow:0 0 18px #8bf5ff}
+.reactor-core{cursor:pointer;padding:0;gap:1px;color:inherit;font:inherit;transition:transform .2s,filter .2s}.reactor-core:hover{transform:scale(1.06);filter:brightness(1.2)}.reactor-core:focus-visible{outline:3px solid #b7f8ff;outline-offset:7px}.reactor-core em{font-size:7px;letter-spacing:1.4px;color:#b9f5fa;font-style:normal;margin-top:4px}.reactor-core:active{transform:scale(.96)}.reactor-core span{font:600 42px 'Space Grotesk';color:#d7fbff;text-shadow:0 0 18px #8bf5ff}
 .reactor-core small{font:8px 'DM Mono';letter-spacing:2px;color:#a8e8ef}
 .reactor-label{position:absolute;font:8px 'DM Mono';letter-spacing:1.5px;color:#6d9cad}
 .reactor-label b{color:#b6f6f4;font-weight:500;margin-left:5px}
