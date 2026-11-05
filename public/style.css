@@ -20,7 +20,7 @@ body{background:radial-gradient(ellipse at 52% 4%,rgba(24,92,122,.28),transparen
 .hero-readouts i{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
 .hero-readouts b{color:#a8e9e8;font-weight:500}
 .command-hero .datebox{text-align:left;margin-top:25px;display:flex;align-items:center;gap:13px}
-.command-hero .datebox strong{font-size:17px;color:#c6eaf2}
+.command-hero .datebox strong{font-size:17px;color:#c6eaf2}.command-hero .datebox small{font:8px 'DM Mono';letter-spacing:.8px;color:#6f9bad;max-width:250px}
 .reactor-wrap{position:relative;width:280px;height:280px;flex:none;display:grid;place-items:center;isolation:isolate}
 .reactor-grid{position:absolute;inset:12%;border-radius:50%;background:radial-gradient(circle,rgba(49,187,222,.15),rgba(21,87,124,.04) 50%,transparent 70%);filter:blur(3px)}
 .reactor-ring{position:absolute;border-radius:50%;border:1px solid rgba(87,220,245,.38);box-shadow:0 0 18px rgba(66,207,239,.1),inset 0 0 18px rgba(66,207,239,.06)}
