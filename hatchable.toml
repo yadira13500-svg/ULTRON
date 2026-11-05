@@ -11,6 +11,16 @@ required = false
 description = "Groq API key (console.groq.com). Lets ULTRON hear you with Whisper, including in the iPhone Home Screen app."
 
 [[secret]]
+name = "CLOUDFLARE_ACCOUNT_ID"
+required = false
+description = "Cloudflare Account ID (dash.cloudflare.com, right sidebar of the account home). Used for free Workers AI hearing and voice."
+
+[[secret]]
+name = "CLOUDFLARE_API_TOKEN"
+required = false
+description = "Cloudflare API token with Workers AI permission (dash.cloudflare.com/profile/api-tokens). Stay on the Workers Free plan so usage is capped at the free daily allowance."
+
+[[secret]]
 name = "OPENAI_API_KEY"
 required = false
 description = "Optional OpenAI key. Enables Whisper hearing and ULTRON's premium deep spoken voice."
