@@ -65,7 +65,7 @@ let visionStream=null,visionFrame=null;
 function stopVisionCamera(){
  if(visionStream){visionStream.getTracks().forEach(t=>t.stop());visionStream=null}
  const v=$('#visionVideo');if(v){v.pause();v.srcObject=null;v.hidden=true}
- $('#visionStart').disabled=false;$('#visionCapture').disabled=true;$('#visionStop').disabled=true;
+ $('#visionStart').disabled=false;$('#visionCapture').disabled=true;$('#visionAnalyze').disabled=true;$('#visionStop').disabled=true;
  $('#visionState').textContent='CAMERA OFF';
  $('#visionStatus').textContent='Camera stopped. No live video is being accessed.';
 }
@@ -82,11 +82,11 @@ $('#visionStart').addEventListener('click',async()=>{
 $('#visionCapture').addEventListener('click',()=>{
  const v=$('#visionVideo'),c=$('#visionCanvas');if(!visionStream||!v.videoWidth)return;
  c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0,c.width,c.height);
- visionFrame=c.toDataURL('image/jpeg',0.82);
+ visionFrame=c.toDataURL('image/jpeg',0.82);$('#visionAnalyze').disabled=false;
  const preview=$('#visionPreview');preview.innerHTML='';const img=document.createElement('img');img.alt='Camera frame captured locally';img.src=visionFrame;preview.append(img);preview.hidden=false;
  $('#visionStatus').textContent='Frame captured locally. It has not been sent, stored, or analysed. Stop the camera when finished.';
 });
-$('#visionStop').addEventListener('click',stopVisionCamera);
+$('#visionAnalyze').addEventListener('click',async()=>{if(!visionFrame)return;const ok=confirm('Send this single captured image to NVIDIA Llama 3.2 Vision now? NVIDIA trial terms may allow submitted images and outputs to be recorded to improve its services. Do not send private, confidential or sensitive surroundings. No image will be sent unless you approve this prompt.');if(!ok)return;$('#visionAnalyze').disabled=true;$('#visionStatus').textContent='Sending this one approved frame to NVIDIA for analysis…';try{const result=await req('/vision','POST',{image:visionFrame,consent:true});const answer=result.reply||'No description returned.';bubble('VISUAL AWARENESS · NVIDIA\n'+answer,'bot');$('#visionStatus').textContent='Analysis complete via '+(result.provider||'NVIDIA')+'. This was a one-time image submission; camera stream remains local.';}catch(error){$('#visionStatus').textContent='Vision analysis failed: '+(error.message||'unknown error')+'. No automatic paid fallback was attempted.';}finally{$('#visionAnalyze').disabled=false;}});$('#visionStop').addEventListener('click',stopVisionCamera);
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&visionStream)stopVisionCamera()});
 window.addEventListener('pagehide',stopVisionCamera);
 
