@@ -163,4 +163,27 @@ body{font-family:'DM Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
 @media (max-height:500px) and (orientation:landscape){#ultronTalk.reactor-core.face{width:104px;height:130px}}
 @media (prefers-reduced-motion:reduce){.ueye,.ueyes,.uspine,.umouth rect{animation:none!important}}
 
+/* Companion mode: woman's face and rose-gold glow */
+#ultronTalk.face .uface.uface-f{display:none}
+body[data-persona="companion"] #ultronTalk.face .uface:not(.uface-f){display:none}
+body[data-persona="companion"] #ultronTalk.face .uface.uface-f{display:block}
+body[data-persona="companion"] #ultronTalk.reactor-core.face{filter:drop-shadow(0 0 18px rgba(255,130,200,.38))}
+body[data-persona="companion"] #ultronTalk.face:hover{filter:drop-shadow(0 0 24px rgba(255,150,210,.55))}
+body[data-persona="companion"] #ultronTalk.face em{color:#ffd3ec}
+body[data-persona="companion"] .reactor-ring{border-color:rgba(255,150,205,.4)}
+body[data-persona="companion"] .ring-b{border-color:rgba(176,140,255,.6);border-left-color:transparent;border-right-color:transparent}
+body[data-persona="companion"] .reactor-grid{background:radial-gradient(circle,rgba(255,110,190,.16),rgba(120,60,160,.05) 50%,transparent 70%)}
+body[data-persona="companion"] .reactor-scan{background:conic-gradient(from 0deg,transparent 0 72%,rgba(255,140,205,.14) 82%,transparent 90%)}
+.ulips{transform-box:fill-box}
+.ulip-low{transform-box:fill-box;transform-origin:center top;transition:transform .2s}
+.ugap{transform-box:fill-box;transform-origin:center;transform:scaleY(.2);transition:transform .2s}
+#ultronTalk.speaking .ulip-low{animation:ulips .42s ease-in-out infinite alternate}
+#ultronTalk.speaking .ugap{animation:ugap .42s ease-in-out infinite alternate}
+@keyframes ulips{from{transform:translateY(0)}to{transform:translateY(5px)}}
+@keyframes ugap{from{transform:scaleY(.4)}to{transform:scaleY(5)}}
+body[data-persona="companion"] #ultronTalk.face.speaking{filter:drop-shadow(0 0 28px rgba(255,140,205,.75))}
+body[data-persona="companion"] #ultronTalk.face.listening{filter:drop-shadow(0 0 32px rgba(255,170,220,.9))}
+#ultronTalk.listening .ueye-f{fill:#fff}
+@media (prefers-reduced-motion:reduce){.ulip-low,.ugap{animation:none!important}}
+
 @media print{.top,.dock,#toast,.reactor-wrap{display:none!important}body{background:#fff;color:#000}}
