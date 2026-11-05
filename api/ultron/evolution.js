@@ -11,7 +11,7 @@ export default async function(req,res){
    db.query('SELECT id,from_id,to_id,relation,evidence,source_url,confidence FROM ultron_graph_edges WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 300',[owner]),
    db.query('SELECT id,topic,frequency,boundary,enabled,last_run_at FROM ultron_research_plans WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner]),
    db.query('SELECT id,question,response_excerpt,rating,correction,proposed_improvement,status,created_at FROM ultron_feedback WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner]),
-   db.query('SELECT id,domain,title,objective,source_url,source_name,lesson,test_json,status,created_at FROM ultron_skill_modules WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner])
+   db.query('SELECT id,domain,title,objective,source_url,source_name,lesson,test_json,status,content_excerpt,ingested_at,last_error,created_at FROM ultron_skill_modules WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner])
   ]);
   return res.json({preferences:p.rows,nodes:n.rows,edges:e.rows,researchPlans:r.rows,feedback:f.rows,skills:s.rows,domains});
  }
@@ -26,7 +26,7 @@ export default async function(req,res){
    if(!String(b.topic||'').trim())return res.status(400).json({error:'Research topic required.'});
    const freq=['daily','weekly','monthly'].includes(b.frequency)?b.frequency:'weekly';
    const {rows}=await db.query('INSERT INTO ultron_research_plans(owner_id,topic,frequency,boundary,enabled) VALUES($1,$2,$3,$4,$5) RETURNING *',[owner,String(b.topic).slice(0,240),freq,String(b.boundary||'').slice(0,1000),b.enabled===true]);
-   return res.status(201).json({plan:rows[0],note:'Authorization saved. Scheduled execution requires an enabled scheduler job; no background research is claimed until that is configured.'});
+   return res.status(201).json({plan:rows[0],note:b.enabled===true?'Research authorized. ULTRON will pick this topic up on its next hourly research-pipeline run.':'Research plan saved paused; enable it to authorize scheduled runs.'});
   }
   if(type==='feedback'){
    if(!b.question||!['helpful','incorrect','incomplete'].includes(b.rating))return res.status(400).json({error:'Question and valid rating required.'});

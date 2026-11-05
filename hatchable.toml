@@ -57,3 +57,7 @@ description = "Create Gmail drafts after you approve them. ULTRON never sends em
 [[cron]]
 path = "/api/ultron/jobs/daily-brief"
 schedule = "0 * * * *"
+
+[[cron]]
+path = "/api/ultron/jobs/research-pipeline"
+schedule = "0 * * * *"
