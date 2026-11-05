@@ -87,6 +87,24 @@ $('#saveLesson').addEventListener('click',async()=>{const l=lessons[lessonIndex%
 $('#journalForm').addEventListener('submit',async e=>{e.preventDefault();const body=$('#journalText').value.trim();if(!body)return;try{await req('/items','POST',{kind:'journal',title:'Daily reflection',body});$('#journalText').value='';$('#journalStatus').textContent='Saved privately to your workspace.';toast('Reflection saved.')}catch(err){toast(err.message)}});
 async function loadHistory(){try{const r=await req('/history?conversation_id='+encodeURIComponent(conversationId));if(r.messages?.length){$('#chat').innerHTML='';r.messages.forEach(m=>bubble(m.content,m.role==='user'?'user':'bot'))}}catch{}}
 $('#newChat').addEventListener('click',()=>{conversationId=crypto.randomUUID();localStorage.setItem('ultron_conversation_id',conversationId);$('#chat').innerHTML='';bubble('New conversation started. What should we work on?','bot')});
+let learnedEntries=[];
+function renderKnowledge(){
+ const xs=learnedEntries;const topics=[...new Set(xs.map(x=>String(x.topic||'').trim()).filter(Boolean))];
+ const stale=xs.filter(x=>{const d=Date.parse(x.published_at||x.created_at||'');return Number.isFinite(d)&&(Date.now()-d)>30*86400000}).length;
+ $('#knowledgeCount').textContent=xs.length;$('#knowledgeTopics').textContent=topics.length;$('#knowledgeFresh').textContent=stale;
+ const words=t=>[...new Set(String(t||'').toLowerCase().match(/[a-z0-9]{4,}/g)||[])].filter(w=>!['about','from','with','that','this','latest','update','news','research'].includes(w));
+ const links=[];for(let i=0;i<topics.length;i++)for(let j=i+1;j<topics.length;j++){const common=words(topics[i]).filter(w=>words(topics[j]).includes(w));if(common.length)links.push([topics[i],topics[j],common[0]])}
+ $('#knowledgeGraph').innerHTML=topics.length?'<div class="graph-nodes">'+topics.slice(0,12).map(t=>'<span class="graph-node">'+esc(t)+'</span>').join('')+'</div><div class="tiny graph-caption">'+links.length+' suggested topic connection(s) inferred from shared keywords. These are suggestions, not verified factual relationships.</div>':'<span class="tiny">No topics yet. Research a subject to begin building your knowledge map.</span>';
+ $('#knowledgeList').innerHTML=xs.length?xs.map(x=>'<article class="knowledge-card"><div class="knowledge-card-head"><strong>'+esc(x.topic)+'</strong><button class="mini-delete" data-knowledge-delete="'+esc(x.id)+'" aria-label="Delete saved source">×</button></div><p>'+esc(x.summary||'No summary supplied.')+'</p><div class="knowledge-meta">'+esc(x.source_name||'Public source')+' · '+(x.published_at?esc(x.published_at):'Publication date unavailable')+'</div>'+(x.source_url?'<a class="knowledge-link" href="'+esc(x.source_url)+'" target="_blank" rel="noopener noreferrer">Open original source ↗</a>':'')+'</article>').join(''):'<div class="empty">No saved research yet. Use Ask ULTRON to research a topic; source records will appear here.</div>';
+ $('#evolutionStatus').textContent=xs.length?'Library synced · '+xs.length+' source record(s) · freshness is estimated from publication date when available.':'Library synced · no source records found.';
+}
+async function loadKnowledge(q=''){
+ try{const r=await req('/knowledge'+(q?'?q='+encodeURIComponent(q):''));learnedEntries=r.knowledge||[];renderKnowledge()}
+ catch(e){$('#evolutionStatus').textContent='Knowledge library unavailable: '+e.message;$('#knowledgeList').innerHTML='<div class="empty">Sign in to load your private knowledge library.</div>'}
+}
+$('#knowledgeSearch').addEventListener('submit',e=>{e.preventDefault();loadKnowledge($('#knowledgeQuery').value.trim())});
+$('#refreshKnowledge').addEventListener('click',()=>loadKnowledge($('#knowledgeQuery').value.trim()));
+$('#knowledgeList').addEventListener('click',async e=>{const b=e.target.closest('[data-knowledge-delete]');if(!b)return;if(!confirm('Delete this saved knowledge record?'))return;try{await req('/knowledge','DELETE',{id:b.dataset.knowledgeDelete});await loadKnowledge($('#knowledgeQuery').value.trim());toast('Knowledge record deleted.')}catch(err){toast(err.message)}});
 async function loadNews(){
  const country=$('#newsCountry').value,category=$('#newsCategory').value,b=$('#refreshNews');
  b.disabled=true;b.textContent='Checking…';$('#newsList').innerHTML='<div class="empty">Checking free news sources…</div>';
@@ -101,7 +119,7 @@ async function loadNews(){
 $('#refreshNews').addEventListener('click',loadNews);
 $('#newsCountry').addEventListener('change',loadNews);
 $('#newsCategory').addEventListener('change',loadNews);
-time();setInterval(time,30000);showLesson();Promise.all([loadItems(),loadSettings()]).then(()=>Promise.all([loadBrief(),loadActions(),loadMemories(),loadIntegrations(),loadHistory(),loadNews()])).then(refreshMissionControl);
+time();setInterval(time,30000);showLesson();Promise.all([loadItems(),loadSettings()]).then(()=>Promise.all([loadBrief(),loadActions(),loadMemories(),loadIntegrations(),loadHistory(),loadNews(),loadKnowledge()])).then(refreshMissionControl);
 setInterval(()=>{if(document.visibilityState==='visible')loadNews()},15*60*1000);
 $('#copySiriPrefix').addEventListener('click',async()=>{const value='https://ultron-ptje.hatchable.site/#siri=';try{await navigator.clipboard.writeText(value);$('#siriStatus').textContent='Link prefix copied. Paste it into the Text action, then insert the encoded-text variable after the equals sign.'}catch{$('#siriStatus').textContent=value}});
 $('#siriSpeakLast').addEventListener('click',()=>{const hadReply=Boolean(lastReplyText);const text=lastReplyText||'Hello. I am ULTRON. Your voice output is working. Use the Talk to ULTRON shortcut to send me a command.';lastReplyText=text;$('#siriStatus').textContent=hadReply?'Playing the latest ULTRON reply.':'Playing the ULTRON voice test.';speak(text,()=>{$('#siriStatus').textContent='ULTRON finished speaking.'})});
