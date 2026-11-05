@@ -220,5 +220,8 @@ body[data-persona="companion"] #ultronTalk.face.listening{filter:drop-shadow(0 0
 @keyframes ultronVoice{from{transform:scale(1);filter:brightness(1.05)}to{transform:scale(1.045);filter:brightness(1.4) saturate(1.2)}}
 @media (max-width:760px){#ultronTalk.reactor-core.face:not(.nophoto){width:176px;height:176px}}
 @media (max-width:380px){#ultronTalk.reactor-core.face:not(.nophoto){width:150px;height:150px}}
-@media (prefers-reduced-motion:reduce){#ultronTalk.face .uface-photo{animation:none!important}}
+#ultronTalk.face:not(.nophoto)::after{content:'';position:absolute;inset:0;border-radius:50%;background:repeating-linear-gradient(0deg,rgba(255,70,56,.07) 0 1px,transparent 1px 3px);mix-blend-mode:screen;pointer-events:none}
+#ultronTalk.face:not(.nophoto)::before{content:'';position:absolute;inset:-9px;border-radius:50%;border:1px dashed rgba(255,90,76,.55);animation:spin 14s linear infinite;pointer-events:none}
+#ultronTalk.face.listening:not(.nophoto)::before{border-color:rgba(255,170,150,.95);animation-duration:3s}
+@media (prefers-reduced-motion:reduce){#ultronTalk.face .uface-photo{animation:none!important}#ultronTalk.face::before{animation:none!important}}
 @media print{.top,.dock,#toast,.reactor-wrap{display:none!important}body{background:#fff;color:#000}}
