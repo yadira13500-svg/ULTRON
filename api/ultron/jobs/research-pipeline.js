@@ -58,7 +58,7 @@ export default async function(req,res) {
       for(const item of entries) {
         const summary=String(item.snippet||item.description||item.title).replace(/<[^>]*>/g,'').slice(0,1200);
         const source=new URL(item.url).hostname.slice(0,160);
-        const saved=await db.query("INSERT INTO ultron_knowledge(owner_id,topic,summary,source_url,source_name,published_at,source_status,last_checked_at) VALUES($1,$2,$3,$4,$5,$6,'available',now()) ON CONFLICT DO NOTHING",[plan.owner_id,plan.topic.slice(0,240),summary,String(item.url).slice(0,1000),source,String(item.published_at||'').slice(0,120)]);
+        const saved=await db.query("INSERT INTO ultron_knowledge(owner_id,topic,summary,source_url,source_name,published_at,source_status,last_checked_at) SELECT $1,$2,$3,$4,$5,$6,'available',now() WHERE NOT EXISTS (SELECT 1 FROM ultron_knowledge WHERE owner_id=$1 AND topic=$2 AND source_url=$4) RETURNING id",[plan.owner_id,plan.topic.slice(0,240),summary,String(item.url).slice(0,1000),source,String(item.published_at||'').slice(0,120)]);
         researchSources+=saved.rowCount||0;
       }
       await db.query('UPDATE ultron_research_plans SET last_run_at=now(),updated_at=now() WHERE id=$1 AND owner_id=$2',[plan.id,plan.owner_id]);
@@ -74,7 +74,12 @@ export default async function(req,res) {
       continue;
     }
     try {
-      const r=await fetch(u.toString(),{method:'HEAD',redirect:'manual',timeout_ms:8000,headers:{'User-Agent':'ULTRON-Research/1.0'}});
+      let r=await fetch(u.toString(),{method:'HEAD',redirect:'manual',timeout_ms:8000,headers:{'User-Agent':'ULTRON-Research/1.0'}});
+      if(r.status>=300&&r.status<400) {
+        const location=r.headers.get('location');
+        const next=location?safeUrl(new URL(location,u).toString()):null;
+        if(next) r=await fetch(next.toString(),{method:'HEAD',redirect:'manual',timeout_ms:8000,headers:{'User-Agent':'ULTRON-Research/1.0'}});
+      }
       let status='available';
       if(r.status===404||r.status===410) status='unavailable';
       else if(r.status>=300&&r.status<400) status='redirected';
@@ -84,7 +89,7 @@ export default async function(req,res) {
         const replacement=await searchPublicWeb(item.topic,'US');
         const candidate=(replacement.results||[]).find(x=>x?.url&&safeUrl(x.url)&&String(x.url)!==item.source_url);
         if(candidate) {
-          const inserted=await db.query("INSERT INTO ultron_knowledge(owner_id,topic,summary,source_url,source_name,published_at,source_status,last_checked_at) VALUES($1,$2,$3,$4,$5,$6,'available',now()) RETURNING id",[item.owner_id,item.topic,String(candidate.snippet||candidate.title).slice(0,1200),String(candidate.url).slice(0,1000),new URL(candidate.url).hostname.slice(0,160),String(candidate.published_at||'').slice(0,120)]);
+          const inserted=await db.query("INSERT INTO ultron_knowledge(owner_id,topic,summary,source_url,source_name,published_at,source_status,last_checked_at) SELECT $1,$2,$3,$4,$5,$6,'available',now() WHERE NOT EXISTS (SELECT 1 FROM ultron_knowledge WHERE owner_id=$1 AND topic=$2 AND source_url=$4) RETURNING id",[item.owner_id,item.topic,String(candidate.snippet||candidate.title).slice(0,1200),String(candidate.url).slice(0,1000),new URL(candidate.url).hostname.slice(0,160),String(candidate.published_at||'').slice(0,120)]);
           if(inserted.rows[0]?.id) await db.query('UPDATE ultron_knowledge SET superseded_by=$3 WHERE id=$1 AND owner_id=$2',[item.id,item.owner_id,inserted.rows[0].id]);
         }
       }
