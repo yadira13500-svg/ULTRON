@@ -186,4 +186,13 @@ body[data-persona="companion"] #ultronTalk.face.listening{filter:drop-shadow(0 0
 #ultronTalk.listening .ueye-f{fill:#fff}
 @media (prefers-reduced-motion:reduce){.ulip-low,.ugap{animation:none!important}}
 
+/* One face for every mode: the ULTRON model face */
+#ultronTalk.face .uface:not(.uface-model){display:none!important}
+#ultronTalk.face .uface.uface-model{display:block}
+#ultronTalk.listening .umiris{fill:#fff}
+#ultronTalk.face{filter:drop-shadow(0 0 18px rgba(80,225,250,.4))}
+#ultronTalk.face.speaking{filter:drop-shadow(0 0 28px rgba(90,235,255,.75))}
+#ultronTalk.face.listening{filter:drop-shadow(0 0 32px rgba(120,242,255,.9))}
+.ulip-low{transform-box:fill-box;transform-origin:center top}
+
 @media print{.top,.dock,#toast,.reactor-wrap{display:none!important}body{background:#fff;color:#000}}

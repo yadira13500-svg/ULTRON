@@ -267,7 +267,7 @@ function pickVoice() {
   if (!('speechSynthesis' in window)) return null;
   const vs = speechSynthesis.getVoices() || []; if (!vs.length) return null;
   const en = vs.filter(v => /^en/i.test(v.lang));
-  const prefs = [/daniel/i, /google uk english male/i, /microsoft (guy|ryan|david|mark|george)/i, /\balex\b/i, /aaron/i, /arthur/i, /oliver/i, /\bfred\b/i, /\bmale\b/i];
+  const prefs = [/samantha/i, /google uk english female/i, /microsoft (aria|jenny|zira|hazel|susan|libby|sonia)/i, /karen/i, /moira/i, /serena/i, /tessa/i, /victoria/i, /allison/i, /\bava\b/i, /\bfemale\b/i, /daniel/i, /google uk english male/i];
   for (const p of prefs) { const v = en.find(x => p.test(x.name)); if (v) return v; }
   const gb = en.find(x => /en[-_]GB/i.test(x.lang)); if (gb) return gb;
   return en[0] || vs[0];
@@ -316,7 +316,7 @@ function speakBrowser(text, finish) {
     const u = new SpeechSynthesisUtterance(parts[i++]);
     const v = V.voice || pickVoice();
     if (v) { u.voice = v; u.lang = v.lang; } else u.lang = navigator.language || 'en-US';
-    u.rate = 1.0; u.pitch = 0.85; u.volume = 1;
+    u.rate = 1.0; u.pitch = 1.0; u.volume = 1;
     u.onstart = () => { started = true; };
     u.onend = next; u.onerror = () => { if (V.curFinish === finish) next(); };
     speechSynthesis.speak(u);
