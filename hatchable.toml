@@ -20,6 +20,13 @@ name = "CLOUDFLARE_API_TOKEN"
 required = false
 description = "Cloudflare API token with Workers AI permission (dash.cloudflare.com/profile/api-tokens). Stay on the Workers Free plan so usage is capped at the free daily allowance."
 
+[[config]]
+name = "cloudflare_account_id"
+type = "string"
+label = "Cloudflare Account ID"
+help = "32-character ID from dash.cloudflare.com (not secret). Pairs with the Cloudflare API token secret for free Workers AI hearing and voice."
+maxlength = 64
+
 [[secret]]
 name = "OPENAI_API_KEY"
 required = false
