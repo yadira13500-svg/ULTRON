@@ -108,6 +108,26 @@ function blobToB64(blob) {
   return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = () => rej(new Error('Could not read the recording.')); r.readAsDataURL(blob); });
 }
 
+async function toWav16k(blob) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!V.ctx) V.ctx = new AC();
+  const arr = await blob.arrayBuffer();
+  const buf = await new Promise((res, rej) => { const p = V.ctx.decodeAudioData(arr, res, rej); if (p && p.catch) p.catch(rej); });
+  const rate = 16000, len = Math.max(1, Math.ceil(buf.duration * rate));
+  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const off = new OAC(1, len, rate);
+  const src = off.createBufferSource(); src.buffer = buf; src.connect(off.destination); src.start();
+  const pcm = (await off.startRendering()).getChannelData(0);
+  const dv = new DataView(new ArrayBuffer(44 + pcm.length * 2));
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); dv.setUint32(4, 36 + pcm.length * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, rate, true); dv.setUint32(28, rate * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  w(36, 'data'); dv.setUint32(40, pcm.length * 2, true);
+  for (let i = 0; i < pcm.length; i++) { const s = Math.max(-1, Math.min(1, pcm[i])); dv.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true); }
+  return new Blob([dv], { type: 'audio/wav' });
+}
+
 /* ---------- listening engines ---------- */
 async function listenServer(handsFree, sid) {
   const handle = { stop() { V.session++; if (V.stopRec) V.stopRec(); } };
@@ -121,8 +141,10 @@ async function listenServer(handsFree, sid) {
   if (sid !== V.session) return null;
   if (!blob || blob.size < 5000) return { text: '', heard: false };
   setStatus('Transcribing…');
-  const audioB64 = await blobToB64(blob);
-  const r = await req('/voice', 'POST', { action: 'transcribe', audioB64, mimeType: blob.type || 'audio/webm' });
+  let send = blob;
+  try { send = await toWav16k(blob); } catch (e) { console.warn('WAV conversion failed; sending the original recording', e); }
+  const audioB64 = await blobToB64(send);
+  const r = await req('/voice', 'POST', { action: 'transcribe', audioB64, mimeType: send.type || 'audio/webm' });
   return { text: String(r.text || '').trim(), heard: true };
 }
 function listenBrowser(handsFree, sid) {
@@ -175,7 +197,7 @@ function stopLoop() {
 }
 function noEngine() {
   const msg = (IOS && STANDALONE)
-    ? 'Home Screen mode needs a Whisper key to hear you: add GROQ_API_KEY (or OPENAI_API_KEY) in Hatchable Setup and keep AI enabled. Or open ULTRON in Safari for live listening — or enable the AI brain with an OpenAI key so ULTRON can hear you with Whisper. For now, tap the text box and use the microphone key on your iPhone keyboard.'
+    ? 'Home Screen mode needs a Whisper service to hear you: your Cloudflare keys (or GROQ_API_KEY) must be saved in Hatchable and the AI brain enabled. Or open ULTRON in Safari for live listening — or enable the AI brain with an OpenAI key so ULTRON can hear you with Whisper. For now, tap the text box and use the microphone key on your iPhone keyboard.'
     : 'This browser has no live speech recognition. Use Safari or Chrome, or enable the AI brain with an OpenAI key for built-in hearing.';
   setStatus(msg); note('Live listening unavailable here — see the status line.');
   const m = q('#message'); if (m) m.focus();
@@ -268,12 +290,18 @@ function stopSpeaking() {
   try { if (V.audio) V.audio.pause(); } catch {}
 }
 async function speakServer(text) {
-  const r = await req('/voice', 'POST', { action: 'speak', text });
+  let t = text;
+  if (t.length > 700) { t = t.slice(0, 700); const i = Math.max(t.lastIndexOf('. '), t.lastIndexOf('? '), t.lastIndexOf('! ')); if (i > 200) t = t.slice(0, i + 1); }
+  const r = await req('/voice', 'POST', { action: 'speak', text: t });
   if (!r.audioB64) throw new Error('No audio returned.');
   return new Promise(resolve => {
     const a = ensureAudio();
     a.onended = () => resolve(true); a.onerror = () => resolve(false);
+    const deep = r.provider === 'cloudflare';
+    try { a.preservesPitch = !deep; a.webkitPreservesPitch = !deep; } catch {}
     a.src = 'data:' + (r.mime || 'audio/mpeg') + ';base64,' + r.audioB64;
+    const rate = deep ? 0.88 : 1;
+    try { a.defaultPlaybackRate = rate; a.playbackRate = rate; } catch {}
     const p = a.play(); if (p && p.catch) p.catch(() => resolve(false));
   });
 }

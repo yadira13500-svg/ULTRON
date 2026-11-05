@@ -56,7 +56,33 @@ async function getSettings(owner) {
 async function keys() {
   const groq = await config.get('GROQ_API_KEY');
   const openai = (await config.get('USE_OPENAI_VOICE')) === 'true' ? await config.get('OPENAI_API_KEY') : null;
-  return { groq: groq || null, openai: openai || null };
+  const cfTok = await config.get('CLOUDFLARE_API_TOKEN');
+  const cfAcct = (await config.get('cloudflare_account_id')) || (await config.get('CLOUDFLARE_ACCOUNT_ID'));
+  return { groq: groq || null, openai: openai || null, cf: cfTok && cfAcct ? { token: cfTok, acct: String(cfAcct).trim() } : null };
+}
+
+function cfCall(cf, model, payload) {
+  return fetch('https://api.cloudflare.com/client/v4/accounts/' + cf.acct + '/ai/run/' + model, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + cf.token, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+
+async function transcribeCloudflare(cf, audioB64) {
+  let r = await cfCall(cf, '@cf/openai/whisper-large-v3-turbo', { audio: audioB64, language: 'en', initial_prompt: PROMPT });
+  if (r.status === 400) r = await cfCall(cf, '@cf/openai/whisper-large-v3-turbo', { audio: audioB64 });
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j || j.success === false) throw new Error('cloudflare transcription ' + r.status + ': ' + JSON.stringify((j && j.errors) || '').slice(0, 200));
+  return String((j.result && j.result.text) || '').trim();
+}
+
+async function speakCloudflare(cf, text) {
+  const r = await cfCall(cf, '@cf/myshell-ai/melotts', { prompt: text.slice(0, 700), lang: 'en' });
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j || j.success === false || !j.result || !j.result.audio) throw new Error('cloudflare speech ' + r.status + ': ' + JSON.stringify((j && j.errors) || '').slice(0, 200));
+  const a = String(j.result.audio);
+  return { audioB64: a, mime: a.startsWith('UklG') ? 'audio/wav' : 'audio/mpeg' };
 }
 
 async function transcribeDirect(provider, key, audioB64, mime, ext) {
@@ -81,8 +107,8 @@ export default async function (req, res) {
 
   if (req.method === 'GET') {
     if (!settings.ai_enabled) return res.json({ stt: false, tts: false, reason: 'ai_disabled' });
-    if (k.groq || k.openai) {
-      return res.json({ stt: true, tts: !!k.openai, reason: 'ok', stt_provider: k.groq ? 'groq' : 'openai' });
+    if (k.cf || k.groq || k.openai) {
+      return res.json({ stt: true, tts: !!(k.openai || k.cf), reason: 'ok', stt_provider: k.cf ? 'cloudflare' : k.groq ? 'groq' : 'openai', tts_provider: k.openai ? 'openai' : k.cf ? 'cloudflare' : null });
     }
     try {
       return res.json({ stt: false, tts: false, reason: 'free_mode' });
@@ -107,9 +133,10 @@ export default async function (req, res) {
     const mime = String(body.mimeType || 'audio/webm').toLowerCase();
     const ext = /mp4|m4a|aac/.test(mime) ? 'm4a' : /ogg/.test(mime) ? 'ogg' : /wav/.test(mime) ? 'wav' : /mpeg|mp3/.test(mime) ? 'mp3' : 'webm';
     try {
-      if (k.groq || k.openai) {
+      if (k.cf || k.groq || k.openai) {
         let text = null, lastE = null;
-        for (const [p, key] of [['groq', k.groq], ['openai', k.openai]]) {
+        if (k.cf) { try { text = await transcribeCloudflare(k.cf, audioB64); } catch (e) { lastE = e; } }
+        if (text === null) for (const [p, key] of [['groq', k.groq], ['openai', k.openai]]) {
           if (!key) continue;
           try { text = await transcribeDirect(p, key, audioB64, mime, ext); break; } catch (e) { lastE = e; }
         }
@@ -145,6 +172,9 @@ export default async function (req, res) {
       let r;
       if (k.openai) {
         r = await fetch('https://api.openai.com/v1/audio/speech', { method: 'POST', headers: { Authorization: 'Bearer ' + k.openai, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      } else if (k.cf) {
+        const out = await speakCloudflare(k.cf, text);
+        return res.json({ audioB64: out.audioB64, mime: out.mime, provider: 'cloudflare' });
       } else if (k.groq) {
         return res.status(412).json({ error: 'Premium spoken replies need an OpenAI key; the device voice is used instead.', code: 'ai_setup_required' });
       } else {
@@ -156,7 +186,7 @@ export default async function (req, res) {
         return res.status(c.status).json({ error: c.error, code: c.code });
       }
       const bytes = await responseBytes(r);
-      return res.json({ audioB64: bytesToBase64(bytes), mime: 'audio/mpeg' });
+      return res.json({ audioB64: bytesToBase64(bytes), mime: 'audio/mpeg', provider: 'openai' });
     } catch (e) {
       const c = classify(e);
       return res.status(c.status).json({ error: c.error, code: c.code });
