@@ -26,7 +26,7 @@ export default async function(req,res) {
       const steps = (await db.query('SELECT id,position,step_type,title,input,status,result,error,attempts,started_at,completed_at FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 ORDER BY position',[id,owner])).rows;
       return res.json({run,steps});
     }
-    const runs = (await db.query('SELECT id,title,objective,status,error,attempts,created_at,updated_at,completed_at FROM ultron_agent_runs WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 40',[owner])).rows;
+    const runs = (await db.query('SELECT id,title,objective,status,result,error,attempts,created_at,updated_at,completed_at FROM ultron_agent_runs WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 40',[owner])).rows;
     return res.json({runs});
   }
 

@@ -22,7 +22,7 @@ async function verifyUrl(value) {
     u=next;
     r=await fetch(u.toString(),{method:'HEAD',redirect:'manual',timeout_ms:10000,headers:{'User-Agent':'ULTRON-Agent/1.0'}});
   }
-  return {verified:r.status>=200&&r.status<300,url:u.toString(),status:r.status,checkedAt:new Date().toISOString(),contentType:r.headers.get('content-type')||''};
+  return {reachable:r.status>=200&&r.status<300,verified:false,verificationType:'url_reachability',url:u.toString(),status:r.status,checkedAt:new Date().toISOString(),contentType:r.headers.get('content-type')||'',note:'This confirms that the URL responded. It does not verify the accuracy of claims on the page.'};
 }
 async function quickResearch(query) {
   const q=String(query||'').trim().slice(0,240);
@@ -74,7 +74,7 @@ async function executeStep(step, owner, runId) {
   }
   if(step.step_type==='verify_url') {
     const result=await verifyUrl(input.url);
-    if(!result.verified) throw new Error('Source verification failed: HTTP '+(result.status||'unavailable')+'. '+(result.error||''));
+    if(!result.reachable) throw new Error('Source reachability check failed: HTTP '+(result.status||'unavailable')+'. '+(result.error||''));
     return result;
   }
   if(step.step_type==='create_task') {
@@ -90,13 +90,16 @@ async function executeStep(step, owner, runId) {
     let sourceName='Owner-provided';
     if(sourceUrl) {
       const prior=(await db.query("SELECT result FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND step_type='verify_url' AND status='completed' ORDER BY position DESC",[runId,owner])).rows;
-      const match=prior.map(x=>x.result||{}).find(x=>x.url===sourceUrl&&x.verified===true);
+      const match=prior.map(x=>x.result||{}).find(x=>x.url===sourceUrl&&x.reachable===true);
       if(!match) throw new Error('This source has not passed a verify_url step in this run. Add verification before saving sourced learning.');
       sourceName=new URL(sourceUrl).hostname.slice(0,160);
     }
     const topic=String(input.topic).trim().slice(0,240), summary=String(input.summary).trim().slice(0,3000);
-    const saved=await db.query("INSERT INTO ultron_knowledge(owner_id,topic,summary,source_url,source_name,published_at,source_status,last_checked_at) VALUES($1,$2,$3,$4,$5,'','available',CASE WHEN $4<>'' THEN now() ELSE NULL END) RETURNING id,topic,source_url,source_name,created_at",[owner,topic,summary,sourceUrl,sourceName]);
-    return {saved:true,knowledge:saved.rows[0],sourceVerified:!!sourceUrl};
+    const saved=await db.query("INSERT INTO ultron_knowledge(owner_id,topic,summary,source_url,source_name,published_at,source_status,last_checked_at) VALUES($1,$2,$3,$4,$5,'','available',CASE WHEN $4<>'' THEN now() ELSE NULL END) RETURNING id,topic,summary,source_url,source_name,created_at",[owner,topic,summary,sourceUrl,sourceName]);
+    const row=saved.rows[0];
+    const persisted=(await db.query('SELECT id,topic,summary,source_url,source_name,created_at FROM ultron_knowledge WHERE id=$1 AND owner_id=$2',[row.id,owner])).rows[0];
+    if(!persisted||persisted.topic!==topic||persisted.summary!==summary||persisted.source_url!==sourceUrl) throw new Error('Learning was written but its persisted contents could not be independently checked.');
+    return {saved:true,verified:true,verificationType:'knowledge_persistence',knowledge:persisted,sourceReachable:!!sourceUrl,factualAccuracyVerified:false,note:'The knowledge record was read back successfully. Its factual claims have not been independently established.'};
   }
   throw new Error('Unsupported agent step type.');
 }
@@ -136,10 +139,12 @@ export default async function(req,res) {
   const current=(await db.query("SELECT status FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
   if(current?.status==='cancelled') return res.json({ok:true,runId:run.id,status:'cancelled',completedSteps:completed});
   if(current?.status==='failed') return res.json({ok:false,runId:run.id,status:'failed',completedSteps:completed,failedSteps:failed});
-  const counts=(await db.query("SELECT COUNT(*) FILTER (WHERE status='pending')::int AS pending,COUNT(*) FILTER (WHERE status='failed')::int AS failed,COUNT(*) FILTER (WHERE status='completed')::int AS completed FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
+  const counts=(await db.query("SELECT COUNT(*) FILTER (WHERE status='pending')::int AS pending,COUNT(*) FILTER (WHERE status='failed')::int AS failed,COUNT(*) FILTER (WHERE status='completed')::int AS completed,COUNT(*) FILTER (WHERE status='completed' AND COALESCE((result->>'verified')::boolean,false)=true)::int AS verified FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
   if(counts.pending===0&&counts.failed===0) {
-    await db.query("UPDATE ultron_agent_runs SET status='completed',result=$3::jsonb,error='',lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2 AND status='running'",[run.id,run.owner_id,JSON.stringify({stepsCompleted:counts.completed,verifiedWork:true,completedAt:new Date().toISOString()})]);
-    return res.json({ok:true,runId:run.id,status:'completed',stepsCompleted:counts.completed});
+    const fullyVerified=counts.completed>0&&counts.verified===counts.completed;
+    const summary={stepsCompleted:counts.completed,stepsVerified:counts.verified,verifiedWork:fullyVerified,verificationStatus:fullyVerified?'verified':'partial',completedAt:new Date().toISOString()};
+    await db.query("UPDATE ultron_agent_runs SET status='completed',result=$3::jsonb,error='',lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2 AND status='running'",[run.id,run.owner_id,JSON.stringify(summary)]);
+    return res.json({ok:true,runId:run.id,status:'completed',stepsCompleted:counts.completed,stepsVerified:counts.verified,verificationStatus:summary.verificationStatus});
   }
   await db.query("UPDATE ultron_agent_runs SET status='queued',lease_until=NULL,updated_at=now() WHERE id=$1 AND owner_id=$2 AND status='running'",[run.id,run.owner_id]);
   try { await scheduler.at(new Date(Date.now()+60000),ROUTE,{payload:{runId:run.id},name:'ultron-agent-'+run.id}); }
