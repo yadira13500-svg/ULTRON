@@ -1,0 +1,79 @@
+import { db, scheduler } from 'hatchable';
+
+export const access = 'admin';
+export const methods = ['GET','POST','PUT'];
+
+const STEP_TYPES = new Set(['research_search','verify_url','save_learning']);
+const safeUrl = value => {
+  try {
+    const u = new URL(String(value || ''));
+    const h = u.hostname.toLowerCase();
+    if (u.protocol !== 'https:' || !h || u.username || u.password ||
+      h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') ||
+      /^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(h) || h === '::1' || h.startsWith('[')) return null;
+    return u;
+  } catch { return null; }
+};
+
+export default async function(req,res) {
+  const owner = String(req.member.id);
+  if (req.method === 'GET') {
+    const id = String(req.query?.id || '');
+    if (id) {
+      const run = (await db.query('SELECT id,title,objective,status,plan,result,error,attempts,created_at,updated_at,started_at,completed_at FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2',[id,owner])).rows[0];
+      if (!run) return res.status(404).json({error:'Agent run not found.'});
+      const steps = (await db.query('SELECT id,position,step_type,title,input,status,result,error,attempts,started_at,completed_at FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 ORDER BY position',[id,owner])).rows;
+      return res.json({run,steps});
+    }
+    const runs = (await db.query('SELECT id,title,objective,status,error,attempts,created_at,updated_at,completed_at FROM ultron_agent_runs WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 40',[owner])).rows;
+    return res.json({runs});
+  }
+
+  if (req.method === 'POST') {
+    const body = req.body || {};
+    const title = String(body.title || '').trim();
+    const objective = String(body.objective || '').trim();
+    const steps = Array.isArray(body.steps) ? body.steps : [];
+    if (!title || title.length > 180 || objective.length > 2000 || !steps.length || steps.length > 8)
+      return res.status(400).json({error:'Provide a title, an objective under 2,000 characters, and 1–8 steps.'});
+    const normalized = [];
+    for (let i=0;i<steps.length;i++) {
+      const s=steps[i] || {};
+      const type=String(s.type || '');
+      const label=String(s.title || type).trim();
+      const input=s.input && typeof s.input === 'object' && !Array.isArray(s.input) ? s.input : {};
+      if (!STEP_TYPES.has(type) || !label || label.length>180) return res.status(400).json({error:'Step '+(i+1)+' has an unsupported type or title.'});
+      if (type==='research_search' && (!String(input.query||'').trim() || String(input.query).length>300)) return res.status(400).json({error:'Research steps need a query under 300 characters.'});
+      if (type==='verify_url' && !safeUrl(input.url)) return res.status(400).json({error:'Verification steps require a public HTTPS URL.'});
+      if (type==='save_learning' && (!String(input.topic||'').trim() || !String(input.summary||'').trim() || String(input.summary).length>3000)) return res.status(400).json({error:'Learning steps need a topic and a summary under 3,000 characters.'});
+      normalized.push({position:i+1,type,title:label,input});
+    }
+    const run = (await db.query("INSERT INTO ultron_agent_runs(owner_id,title,objective,plan) VALUES($1,$2,$3,$4::jsonb) RETURNING id,title,objective,status,created_at",[owner,title,objective,JSON.stringify(normalized)])).rows[0];
+    for (const s of normalized) {
+      await db.query('INSERT INTO ultron_agent_steps(run_id,owner_id,position,step_type,title,input) VALUES($1,$2,$3,$4,$5,$6::jsonb)',[run.id,owner,s.position,s.type,s.title,JSON.stringify(s.input)]);
+    }
+    try {
+      await scheduler.now('/api/ultron/jobs/agent-runner',{runId:run.id});
+    } catch (e) {
+      await db.query("UPDATE ultron_agent_runs SET error=$3,updated_at=now() WHERE id=$1 AND owner_id=$2",[run.id,owner,'Immediate worker could not be queued: '+String(e?.message||e).slice(0,180)]);
+      return res.status(202).json({runId:run.id,status:'queued',workerQueued:false,message:'Saved durably. The hourly recovery worker will pick it up.'});
+    }
+    return res.status(202).json({runId:run.id,status:'queued',workerQueued:true,message:'Plan saved. Background execution has been queued.'});
+  }
+
+  const body=req.body||{}, id=String(body.id||''), action=String(body.action||'');
+  if (!id || !['cancel','retry'].includes(action)) return res.status(400).json({error:'Provide a run id and cancel/retry action.'});
+  if (action==='cancel') {
+    const r=await db.query("UPDATE ultron_agent_runs SET status='cancelled',lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2 AND status IN ('queued','running') RETURNING id,status",[id,owner]);
+    if (!r.rows.length) return res.status(409).json({error:'This run is not cancellable.'});
+    await db.query("UPDATE ultron_agent_steps SET status='skipped' WHERE run_id=$1 AND owner_id=$2 AND status IN ('pending','running')",[id,owner]);
+    return res.json({ok:true,run:r.rows[0]});
+  }
+  const r=await db.query("UPDATE ultron_agent_runs SET status='queued',error='',lease_until=NULL,completed_at=NULL,updated_at=now() WHERE id=$1 AND owner_id=$2 AND status IN ('failed','cancelled') RETURNING id",[id,owner]);
+  if (!r.rows.length) return res.status(409).json({error:'Only failed or cancelled runs can be retried.'});
+  await db.query("UPDATE ultron_agent_steps SET status='pending',error='',result='{}'::jsonb,started_at=NULL,completed_at=NULL WHERE run_id=$1 AND owner_id=$2 AND status IN ('failed','skipped')",[id,owner]);
+  try { await scheduler.now('/api/ultron/jobs/agent-runner',{runId:id}); }
+  catch (e) { return res.status(202).json({ok:true,status:'queued',workerQueued:false}); }
+  return res.status(202).json({ok:true,status:'queued',workerQueued:true});
+}

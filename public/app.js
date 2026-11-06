@@ -160,6 +160,39 @@ $('#planForm').addEventListener('submit',async e=>{e.preventDefault();try{const 
 $('#feedbackForm').addEventListener('submit',async e=>{e.preventDefault();try{await req('/evolution','POST',{type:'feedback',question:$('#feedbackQuestion').value.trim(),rating:$('#feedbackRating').value,correction:$('#feedbackCorrection').value.trim(),proposed_improvement:$('#feedbackProposal').value.trim()});e.target.reset();await loadEvolution();toast('Evaluation saved for review.')}catch(err){toast(err.message)}});
 $('#skillForm').addEventListener('submit',async e=>{e.preventDefault();try{const test=$('#skillTest').value.split('\n').map(x=>x.trim()).filter(Boolean).map(question=>({question}));await req('/evolution','POST',{type:'skill',domain:$('#skillDomain').value,title:$('#skillTitle').value.trim(),source_name:$('#skillSourceName').value.trim(),source_url:$('#skillSource').value.trim(),objective:$('#skillObjective').value.trim(),lesson:$('#skillLesson').value.trim(),test});e.target.reset();await loadEvolution();toast('Specialist module saved as a draft.')}catch(err){toast(err.message)}});
 $('#learningEngine').addEventListener('click',async e=>{const del=e.target.closest('[data-evo-delete]'),toggle=e.target.closest('[data-plan-toggle]'),fb=e.target.closest('[data-feedback-status]'),edit=e.target.closest('[data-pref-edit]'),confirmPref=e.target.closest('[data-pref-confirm]'),review=e.target.closest('[data-suggestion-review]');try{if(confirmPref){await req('/evolution','PUT',{type:'preference_confirm',id:confirmPref.dataset.prefConfirm});await loadEvolution();toast('Preference confirmed. ULTRON can now use it to tailor assistance.')}else if(review){if(review.dataset.status==='approved'&&!confirm('Promote this evidence-backed suggestion into the confirmed knowledge graph?'))return;await req('/evolution','PUT',{type:'graph_suggestion',id:review.dataset.suggestionReview,status:review.dataset.status});await loadEvolution();toast(review.dataset.status==='approved'?'Connection promoted to confirmed graph.':'Suggestion rejected.')}else if(edit){const p=evolutionData.preferences.find(x=>x.id===edit.dataset.prefEdit);if(!p)return;const corrected=prompt('Correct this preference:',p.preference);if(corrected===null||!corrected.trim())return;await req('/evolution','PUT',{type:'preference',id:p.id,preference:corrected.trim()});await loadEvolution();toast('Preference corrected.')}else if(del){if(!confirm('Delete this learning record?'))return;await req('/evolution','DELETE',{type:del.dataset.evoDelete,id:del.dataset.id});await loadEvolution()}else if(toggle){await req('/evolution','PUT',{type:'research_plan',id:toggle.dataset.planToggle,enabled:toggle.dataset.enabled==='true'});await loadEvolution()}else if(fb){await req('/evolution','PUT',{type:'feedback',id:fb.dataset.feedbackStatus,status:fb.dataset.status});await loadEvolution()}}catch(err){toast(err.message)}});
+let agentRuns=[];
+function agentStatus(s){return ({queued:'QUEUED',running:'RUNNING',completed:'VERIFIED COMPLETE',failed:'FAILED · REVIEW REQUIRED',cancelled:'CANCELLED'})[s]||String(s||'UNKNOWN').toUpperCase()}
+function renderAgentRuns(){
+ const box=$('#agentRuns');if(!box)return;
+ $('#agentStatus').textContent=agentRuns.filter(x=>['queued','running'].includes(x.status)).length+' active · '+agentRuns.length+' recent mission(s) · free-first execution';
+ box.innerHTML=agentRuns.length?agentRuns.map(r=>'<article class="evolution-item"><strong>'+esc(r.title)+'</strong><p>'+esc(r.objective||'No extra objective supplied.')+'</p><small>'+agentStatus(r.status)+' · '+new Date(r.created_at).toLocaleString()+(r.error?' · '+esc(r.error):'')+'</small><div class="agent-actions"><button class="secondary" data-agent-open="'+esc(r.id)+'">Inspect steps</button>'+(r.status==='queued'||r.status==='running'?'<button class="secondary" data-agent-action="cancel" data-id="'+esc(r.id)+'">Cancel</button>':'')+(r.status==='failed'||r.status==='cancelled'?'<button class="secondary" data-agent-action="retry" data-id="'+esc(r.id)+'">Retry</button>':'')+'</div></article>').join(''):'<div class="empty">No agent missions yet. Create one above to start ULTRON’s execution cycle.</div>';
+}
+async function loadAgentRuns(){
+ try{agentRuns=(await req('/agent')).runs||[];renderAgentRuns()}catch(e){$('#agentStatus').textContent='Agent engine unavailable: '+e.message}
+}
+async function inspectAgentRun(id){
+ const d=await req('/agent?id='+encodeURIComponent(id)),r=d.run,steps=d.steps||[];
+ $('#agentRunDetail').innerHTML='<strong>'+esc(r.title)+' · '+agentStatus(r.status)+'</strong><p>'+esc(r.objective||'No objective supplied.')+'</p>'+steps.map(s=>'<article class="agent-step"><b>'+s.position+'. '+esc(s.title)+'</b><small>'+esc(s.step_type)+' · '+esc(s.status.toUpperCase())+'</small>'+(s.error?'<p>'+esc(s.error)+'</p>':'')+(s.result&&Object.keys(s.result).length?'<pre>'+esc(JSON.stringify(s.result,null,2).slice(0,5000))+'</pre>':'')+'</article>').join('')+'<small class="tiny">Created '+new Date(r.created_at).toLocaleString()+' · Attempts '+r.attempts+'</small>';
+}
+$('#agentForm').addEventListener('submit',async e=>{
+ e.preventDefault();const b=e.submitter;b.disabled=true;b.textContent='Queuing mission…';
+ try{
+  const title=$('#agentTitle').value.trim(),objective=$('#agentObjective').value.trim(),query=$('#agentQuery').value.trim(),verifyUrl=$('#agentVerifyUrl').value.trim(),topic=$('#agentLearnTopic').value.trim(),summary=$('#agentLearnSummary').value.trim();
+  if(Boolean(topic)!==Boolean(summary))throw new Error('Enter both a learning topic and its summary, or leave both blank.');
+  const steps=[{type:'research_search',title:'Research the objective',input:{query}}];
+  if(verifyUrl)steps.push({type:'verify_url',title:'Verify the supplied source',input:{url:verifyUrl}});
+  if(topic&&summary)steps.push({type:'save_learning',title:'Save verified learning',input:{topic,summary,source_url:verifyUrl}});
+  const r=await req('/agent','POST',{title,objective,steps});
+  e.target.reset();await loadAgentRuns();await inspectAgentRun(r.runId);toast(r.workerQueued?'Mission saved and background execution queued.':'Mission saved; recovery worker will pick it up.');
+ }catch(err){toast(err.message)}finally{b.disabled=false;b.textContent='Launch mission ↗'}
+});
+$('#agentRuns').addEventListener('click',async e=>{
+ const open=e.target.closest('[data-agent-open]'),action=e.target.closest('[data-agent-action]');
+ try{
+  if(open)await inspectAgentRun(open.dataset.agentOpen);
+  else if(action){const r=await req('/agent','PUT',{id:action.dataset.id,action:action.dataset.agentAction});await loadAgentRuns();await inspectAgentRun(action.dataset.id);toast(action.dataset.agentAction==='cancel'?'Mission cancelled.':'Mission queued for retry.')}
+ }catch(err){toast(err.message)}
+});
 async function loadNews(){
  const country=$('#newsCountry').value,category=$('#newsCategory').value,b=$('#refreshNews');
  b.disabled=true;b.textContent='Checking…';$('#newsList').innerHTML='<div class="empty">Checking free news sources…</div>';
@@ -174,8 +207,9 @@ async function loadNews(){
 $('#refreshNews').addEventListener('click',loadNews);
 $('#newsCountry').addEventListener('change',loadNews);
 $('#newsCategory').addEventListener('change',loadNews);
-time();setInterval(time,30000);showLesson();Promise.all([loadItems(),loadSettings()]).then(()=>Promise.all([loadBrief(),loadActions(),loadMemories(),loadIntegrations(),loadHistory(),loadNews(),loadKnowledge(),loadEvolution()])).then(refreshMissionControl);
+time();setInterval(time,30000);showLesson();Promise.all([loadItems(),loadSettings()]).then(()=>Promise.all([loadBrief(),loadActions(),loadMemories(),loadIntegrations(),loadHistory(),loadNews(),loadKnowledge(),loadEvolution(),loadAgentRuns()])).then(refreshMissionControl);
 setInterval(()=>{if(document.visibilityState==='visible')loadNews()},15*60*1000);
+setInterval(()=>{if(document.visibilityState==='visible'&&agentRuns.some(x=>['queued','running'].includes(x.status)))loadAgentRuns()},12000);
 $('#copySiriPrefix').addEventListener('click',async()=>{const value='https://ultron-ptje.hatchable.site/#siri=';try{await navigator.clipboard.writeText(value);$('#siriStatus').textContent='Link prefix copied. Paste it into the Text action, then insert the encoded-text variable after the equals sign.'}catch{$('#siriStatus').textContent=value}});
 $('#siriSpeakLast').addEventListener('click',()=>{const hadReply=Boolean(lastReplyText);const text=lastReplyText||'Hello. I am ULTRON. Your voice output is working. Use the Talk to ULTRON shortcut to send me a command.';lastReplyText=text;$('#siriStatus').textContent=hadReply?'Playing the latest ULTRON reply.':'Playing the ULTRON voice test.';speak(text,()=>{$('#siriStatus').textContent='ULTRON finished speaking.'})});
 const siriHash=window.location.hash;

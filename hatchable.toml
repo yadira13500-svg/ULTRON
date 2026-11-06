@@ -78,3 +78,7 @@ schedule = "0 * * * *"
 [[cron]]
 path = "/api/ultron/jobs/research-pipeline"
 schedule = "0 * * * *"
+
+[[cron]]
+path = "/api/ultron/jobs/agent-runner"
+schedule = "0 * * * *"
