@@ -94,7 +94,8 @@ async function executeStep(step, owner, runId) {
     if(!(type.includes('text/html')||type.includes('text/plain')||type.includes('application/xhtml+xml'))) throw new Error('Unsupported source content type; only HTML and plain text are accepted.');
     const declared=Number(r.headers.get('content-length')||0);
     if(declared>1048576) throw new Error('Source is larger than the 1 MB retrieval limit.');
-    const responseText=await r.text();
+    const responseBody=await r.text();
+    const responseText=typeof responseBody==='string'?responseBody:JSON.stringify(responseBody??'');
     const truncated=responseText.length>120000;
     const raw=responseText.slice(0,120000);
     const lower=raw.toLowerCase(), a=lower.indexOf('<title'), b=a>=0?lower.indexOf('>',a):-1, c=b>=0?lower.indexOf('</title>',b):-1;
@@ -198,7 +199,9 @@ export default async function(req,res) {
     const claim=await db.query("UPDATE ultron_agent_steps SET status='running',attempts=attempts+1,started_at=now(),error='' WHERE id=$1 AND owner_id=$2 AND status='pending' RETURNING id",[step.id,run.owner_id]);
     if(!claim.rows.length) continue;
     try {
+      const approvedLessons=(await db.query("SELECT id,lesson,confidence,evidence FROM ultron_agent_lessons WHERE owner_id=$1 AND status='approved' AND evidence->>'stepType'=$2 ORDER BY reviewed_at DESC LIMIT 3",[run.owner_id,step.step_type])).rows;
       const result=await executeStep(step,run.owner_id,run.id);
+      result.learningContext={source:'owner_approved_lessons',scope:'matching_step_type_only',lessonsConsulted:approvedLessons.map(x=>({id:x.id,lesson:String(x.lesson||'').slice(0,1200),confidence:Number(x.confidence||0)})),count:approvedLessons.length};
       await db.query("UPDATE ultron_agent_steps SET status='completed',result=$3::jsonb,completed_at=now(),error='' WHERE id=$1 AND owner_id=$2",[step.id,run.owner_id,JSON.stringify(result)]);
       completed++;
     } catch(e) {
@@ -225,7 +228,8 @@ export default async function(req,res) {
   }
   if(counts.pending===0&&counts.failed===0) {
     const fullyOperationallyVerified=counts.completed>0&&counts.verified===counts.completed;
-    const summary={stepsCompleted:counts.completed,stepsVerified:counts.verified,verifiedWork:fullyOperationallyVerified,verificationStatus:fullyOperationallyVerified?'operationally_verified':'partial',verificationScope:'operation_checks_only',factualAccuracyVerified:false,completedAt:new Date().toISOString()};
+    const learningUsage=(await db.query("SELECT COUNT(*)::int AS steps_with_lessons,COUNT(DISTINCT lesson_id)::int AS distinct_lessons FROM (SELECT jsonb_array_elements(COALESCE(result->'learningContext'->'lessonsConsulted','[]'::jsonb))->>'id' AS lesson_id FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND status='completed') q WHERE lesson_id IS NOT NULL",[run.id,run.owner_id])).rows[0]||{steps_with_lessons:0,distinct_lessons:0};
+    const summary={stepsCompleted:counts.completed,stepsVerified:counts.verified,verifiedWork:fullyOperationallyVerified,verificationStatus:fullyOperationallyVerified?'operationally_verified':'partial',verificationScope:'operation_checks_only',factualAccuracyVerified:false,learning:{stepsWithApprovedLessons:learningUsage.steps_with_lessons,distinctApprovedLessonsConsulted:learningUsage.distinct_lessons},completedAt:new Date().toISOString()};
     await db.query("UPDATE ultron_agent_runs SET status='completed',result=$3::jsonb,error='',lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2 AND status='running'",[run.id,run.owner_id,JSON.stringify(summary)]);
     return res.json({ok:true,runId:run.id,status:'completed',stepsCompleted:counts.completed,stepsVerified:counts.verified,verificationStatus:summary.verificationStatus,factualAccuracyVerified:false});
   }
