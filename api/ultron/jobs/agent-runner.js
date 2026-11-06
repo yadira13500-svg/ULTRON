@@ -98,7 +98,7 @@ async function executeStep(step, owner, runId) {
     const truncated=responseText.length>120000;
     const raw=responseText.slice(0,120000);
     const lower=raw.toLowerCase(), a=lower.indexOf('<title'), b=a>=0?lower.indexOf('>',a):-1, c=b>=0?lower.indexOf('</title>',b):-1;
-    const title=a>=0&&b>=0&&c>b?raw.slice(b+1,c).replace(/<[^>]*>/g,' ').replace(/\\s+/g,' ').trim():'';
+    const title=a>=0&&b>=0&&c>b?raw.slice(b+1,c).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim():'';
     const attr=(tag,name)=>{const m=String(tag||'').match(new RegExp(name+'="([^"]*)"','i'));return m?m[1].trim():'';};
     const metaTags=raw.match(/<meta\\b[^>]*>/gi)||[];
     const metaValue=keys=>{for(const tag of metaTags){const key=(attr(tag,'name')||attr(tag,'property')||attr(tag,'itemprop')).toLowerCase();if(keys.includes(key)){const value=attr(tag,'content');if(value)return {value,field:key};}}return null;};
@@ -120,10 +120,10 @@ async function executeStep(step, owner, runId) {
     }
     let plain='', tag=false;
     for(let i=0;i<cleaned.length&&plain.length<20000;i++){const ch=cleaned[i];if(ch==='<'){tag=true;continue;}if(ch==='>'){tag=false;plain+=' ';continue;}if(!tag)plain+=ch;}
-    const excerpt=plain.replaceAll('&nbsp;',' ').replaceAll('&amp;','&').replaceAll('&quot;','"').replaceAll('&#39;',"'").replaceAll('&lt;','<').replaceAll('&gt;','>').replace(/\\s+/g,' ').trim().slice(0,8000);
+    const excerpt=plain.replaceAll('&nbsp;',' ').replaceAll('&amp;','&').replaceAll('&quot;','"').replaceAll('&#39;',"'").replaceAll('&lt;','<').replaceAll('&gt;','>').replace(/\s+/g,' ').trim().slice(0,8000);
     if(!excerpt) throw new Error('No readable page text was extracted.');
-    const visiblePublished=excerpt.match(/(?:Published|Publication date)\\s*:\\s*([A-Z][a-z]+\\s+\\d{4}(?:-\\d{2}-\\d{2})?)/);
-    const visibleModified=excerpt.match(/(?:Last updated|Modified)\\s*:\\s*([A-Z][a-z]+\\s+\\d{4}(?:-\\d{2}-\\d{2})?)/);
+    const visiblePublished=excerpt.match(/(?:Published|Publication date)\s*:\s*([A-Z][a-z]+\s+\d{4}(?:-\d{2}-\d{2})?)/);
+    const visibleModified=excerpt.match(/(?:Last updated|Modified)\s*:\s*([A-Z][a-z]+\s+\d{4}(?:-\d{2}-\d{2})?)/);
     const publicationDate=dateRecord(published)||(visiblePublished?dateRecord({value:visiblePublished[1],field:'visible_text_label:published'}):null);
     const modifiedDate=dateRecord(modified)||(visibleModified?dateRecord({value:visibleModified[1],field:'visible_text_label:modified'}):null);
     return {retrieved:true,verified:false,verificationType:'source_content_capture',url:u.toString(),canonicalUrl,title:title.slice(0,240),publisher:publisher?.value||null,description:description?.value||null,publicationDate,modifiedDate,httpStatus:r.status,contentType:type,excerpt,truncated,retrievedAt:new Date().toISOString(),evidenceLimit:'Publication metadata is page-declared and may be absent or inaccurate; retrieval time is not publication time. A captured excerpt is source evidence, not proof that its claims are accurate or independent.'};
