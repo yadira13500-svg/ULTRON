@@ -165,6 +165,12 @@ export default async function (req, res) {
         if(needsSourceDiscovery){
           try { const found=await searchPublicWeb(goalQuery,'WORLD'); const candidate=(found.results||[]).find(x=>x?.url&&String(x.url).startsWith('https://')&&safePublicUrl(String(x.url))); discoveredSourceUrl=candidate?String(candidate.url).slice(0,1000):''; }
           catch { discoveredSourceUrl=''; }
+          if(!discoveredSourceUrl){
+            try {
+              const response=await fetch('https://html.duckduckgo.com/html/?q='+encodeURIComponent(goalQuery),{timeout_ms:9000,headers:{'Accept':'text/html','User-Agent':'Mozilla/5.0 ULTRON-Agent/1.0'}});
+              if(response.ok){const html=await response.text();for(const chunk of html.split('class=\"result__a\"').slice(1,8)){const href=(chunk.split('href=\"')[1]||'').split('\"')[0];try{const link=new URL(href,'https://duckduckgo.com'),target=link.searchParams.get('uddg')||link.href,candidate=new URL(target);if(candidate.protocol==='https:'&&safePublicUrl(candidate.href)&&candidate.hostname!=='duckduckgo.com'&&candidate.hostname!=='google.com'){discoveredSourceUrl=candidate.href.slice(0,1000);break;}}catch{}}}
+            } catch { discoveredSourceUrl=''; }
+          }
         }
         let lastSourceUrl='';
         for (let i=0;i<steps.length;i++) {
