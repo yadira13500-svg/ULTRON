@@ -100,9 +100,9 @@ async function executeStep(step, owner, runId) {
     const lower=raw.toLowerCase(), a=lower.indexOf('<title'), b=a>=0?lower.indexOf('>',a):-1, c=b>=0?lower.indexOf('</title>',b):-1;
     const title=a>=0&&b>=0&&c>b?raw.slice(b+1,c).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim():'';
     const attr=(tag,name)=>{const m=String(tag||'').match(new RegExp(name+'="([^"]*)"','i'));return m?m[1].trim():'';};
-    const metaTags=raw.match(/<meta\\b[^>]*>/gi)||[];
+    const metaTags=raw.match(/<meta\b[^>]*>/gi)||[];
     const metaValue=keys=>{for(const tag of metaTags){const key=(attr(tag,'name')||attr(tag,'property')||attr(tag,'itemprop')).toLowerCase();if(keys.includes(key)){const value=attr(tag,'content');if(value)return {value,field:key};}}return null;};
-    const canonicalTag=(raw.match(/<link\\b[^>]*rel="canonical"[^>]*>/i)||[])[0]||'';
+    const canonicalTag=(raw.match(/<link\b[^>]*rel="canonical"[^>]*>/i)||[])[0]||'';
     const canonicalUrl=(()=>{const href=attr(canonicalTag,'href');if(!href)return null;try{const x=new URL(href,u);return x.protocol==='https:'?x.toString():null;}catch{return null;}})();
     const published=metaValue(['article:published_time','datepublished','citation_publication_date','date']);
     const modified=metaValue(['article:modified_time','datemodified','last-modified']);
@@ -138,15 +138,17 @@ async function executeStep(step, owner, runId) {
     const stop=new Set(['about','after','again','against','also','among','because','been','being','between','could','does','during','each','from','have','into','more','most','other','over','same','should','some','such','than','that','their','there','these','they','this','those','through','under','very','were','what','when','where','which','while','with','would','your']);
     const terms=(claim.toLowerCase().match(/[a-z0-9]{3,}/g)||[]).filter(x=>!stop.has(x));
     const matches=evidence.map(source=>{
-      const sentences=String(source.excerpt||'').split(/(?<=[.!?])\\s+/).slice(0,180);
+      const sentences=String(source.excerpt||'').split(/(?<=[.!?])\s+/).slice(0,180);
       let best={sentence:'',overlap:0,matchedTerms:[]};
       for(const sentence of sentences){const words=new Set((sentence.toLowerCase().match(/[a-z0-9]{3,}/g)||[]).filter(x=>!stop.has(x)));const hit=terms.filter(x=>words.has(x));const ratio=terms.length?hit.length/terms.length:0;if(ratio>best.overlap)best={sentence:sentence.slice(0,700),overlap:Number(ratio.toFixed(3)),matchedTerms:hit};}
-      let host='';try{host=new URL(source.url).hostname.toLowerCase().replace(/^www\\./,'')}catch{}
+      let host='';try{host=new URL(source.url).hostname.toLowerCase().replace(/^www\./,'')}catch{}
       return {title:source.title||'',url:source.url,canonicalUrl:source.canonicalUrl||null,publisher:source.publisher||null,publicationDate:source.publicationDate||null,modifiedDate:source.modifiedDate||null,httpStatus:source.httpStatus||null,contentType:source.contentType||null,truncated:source.truncated===true,host,excerptCandidate:best.sentence,termOverlap:best.overlap,matchedTerms:best.matchedTerms,retrievedAt:source.retrievedAt||null};
     });
     const domains=[...new Set(matches.map(x=>x.host).filter(Boolean))];
     const candidates=matches.filter(x=>x.termOverlap>=0.35&&x.matchedTerms.length>=3);
-    return {claim,assessmentStatus:candidates.length>=2&&domains.length>=2?'evidence_candidates_found':'insufficient_evidence',distinctHostnameCount:domains.length,sourceCount:matches.length,evidenceCandidates:candidates,allSources:matches,verified:false,verificationType:'conservative_claim_evidence_scan',method:'Deterministic term-overlap scan only. It does not infer entailment, contradiction, publisher independence, or truth. Distinct hostnames are not proof of independent publishers.',nextAction:'A human or a separately authorized reasoning step must inspect the quoted passages and source provenance before accepting or rejecting the claim.'};
+    const assessment={claim,assessmentStatus:candidates.length>=2&&domains.length>=2?'evidence_candidates_found':'insufficient_evidence',distinctHostnameCount:domains.length,sourceCount:matches.length,evidenceCandidates:candidates,allSources:matches,verified:false,verificationType:'conservative_claim_evidence_scan',method:'Deterministic term-overlap scan only. It does not infer entailment, contradiction, publisher independence, or truth. Distinct hostnames are not proof of independent publishers.',nextAction:'A human reviewer must inspect the quoted passages and source provenance before accepting or rejecting the claim.'};
+    await db.query("INSERT INTO ultron_claim_reviews(owner_id,run_id,step_id,claim_text,assessment_status,method,assessment) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) ON CONFLICT(owner_id,step_id) DO UPDATE SET claim_text=EXCLUDED.claim_text,assessment_status=EXCLUDED.assessment_status,method=EXCLUDED.method,assessment=EXCLUDED.assessment,review_status='pending',verification_state='unverified',reviewer_note='',correction='',reviewed_at=NULL",[owner,runId,step.id,claim,assessment.assessmentStatus,assessment.method,JSON.stringify(assessment)]);
+    return {...assessment,reviewRecordCreated:true,reviewStatus:'pending'};
   }
   if(step.step_type==='create_task') {
     const title=String(input.title||'').trim(), body=String(input.body||'').trim();

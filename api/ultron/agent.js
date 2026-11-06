@@ -46,7 +46,7 @@ export default async function(req,res) {
       const input=s.input && typeof s.input === 'object' && !Array.isArray(s.input) ? s.input : {};
       if (!STEP_TYPES.has(type) || !label || label.length>180) return res.status(400).json({error:'Step '+(i+1)+' has an unsupported type or title.'});
       if (type==='research_search' && (!String(input.query||'').trim() || String(input.query).length>300)) return res.status(400).json({error:'Research steps need a query under 300 characters.'});
-      if (type==='assess_claim' && (!String(input.claim||'').trim() || String(input.claim).length>600 || !Array.isArray(input.source_urls) || input.source_urls.length<2 || input.source_urls.length>4 || new Set(input.source_urls).size!==input.source_urls.length)) return res.status(400).json({error:'Claim assessment needs a claim under 600 characters and 2–4 distinct source URLs.'});
+      // Claim input validation is performed once above.
       if (type==='assess_claim' && (!String(input.claim||'').trim() || String(input.claim).length>600 || !Array.isArray(input.source_urls) || input.source_urls.length<2 || input.source_urls.length>4 || new Set(input.source_urls).size!==input.source_urls.length)) return res.status(400).json({error:'Claim assessment needs a claim under 600 characters and 2–4 distinct source URLs.'});
       if ((type==='verify_url'||type==='retrieve_source') && !safeUrl(input.url)) return res.status(400).json({error:'Source steps require a public HTTPS URL.'});
       if (type==='save_learning' && (!String(input.topic||'').trim() || !String(input.summary||'').trim() || String(input.summary).length>3000)) return res.status(400).json({error:'Learning steps need a topic and a summary under 3,000 characters.'});
