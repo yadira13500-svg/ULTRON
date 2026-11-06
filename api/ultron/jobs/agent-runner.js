@@ -100,13 +100,17 @@ async function executeStep(step, owner, runId) {
     const lower=raw.toLowerCase(), a=lower.indexOf('<title'), b=a>=0?lower.indexOf('>',a):-1, c=b>=0?lower.indexOf('</title>',b):-1;
     const title=a>=0&&b>=0&&c>b?raw.slice(b+1,c):'';
     let cleaned=raw;
-    for(const name of ['style','script','noscript']) {
+    const pageLower=raw.toLowerCase();
+    const mainStart=pageLower.indexOf('<main'), articleStart=pageLower.indexOf('<article');
+    const contentStart=mainStart>=0?mainStart:articleStart;
+    if(contentStart>=0) cleaned=raw.slice(contentStart);
+    for(const name of ['style','script','noscript','nav','header','footer','aside']) {
       let lower=cleaned.toLowerCase(), start=lower.indexOf('<'+name);
       while(start>=0) { const open=lower.indexOf('>',start), end=open>=0?lower.indexOf('</'+name+'>',open):-1; if(open<0||end<0)break; cleaned=cleaned.slice(0,start)+cleaned.slice(end+name.length+3); lower=cleaned.toLowerCase(); start=lower.indexOf('<'+name); }
     }
     let plain='', tag=false;
-    for(let i=0;i<cleaned.length&&plain.length<12000;i++){const ch=cleaned[i];if(ch==='<'){tag=true;continue;}if(ch==='>'){tag=false;plain+=' ';continue;}if(!tag)plain+=ch;}
-    const excerpt=plain.replaceAll('&nbsp;',' ').replaceAll('&amp;','&').replaceAll('&quot;','"').replaceAll('&#39;',"'").replaceAll('&lt;','<').replaceAll('&gt;','>').replace(/\\s+/g,' ').trim().slice(0,5000);
+    for(let i=0;i<cleaned.length&&plain.length<20000;i++){const ch=cleaned[i];if(ch==='<'){tag=true;continue;}if(ch==='>'){tag=false;plain+=' ';continue;}if(!tag)plain+=ch;}
+    const excerpt=plain.replaceAll('&nbsp;',' ').replaceAll('&amp;','&').replaceAll('&quot;','"').replaceAll('&#39;',"'").replaceAll('&lt;','<').replaceAll('&gt;','>').replace(/\\s+/g,' ').trim().slice(0,8000);
     if(!excerpt) throw new Error('No readable page text was extracted.');
     return {retrieved:true,verified:false,verificationType:'source_content_capture',url:u.toString(),httpStatus:r.status,contentType:type,title:title.slice(0,240),excerpt,truncated,retrievedAt:new Date().toISOString(),evidenceLimit:'A captured page excerpt is source evidence, not proof that its claims are accurate or independent.'};
   }
