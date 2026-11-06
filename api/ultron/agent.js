@@ -21,7 +21,7 @@ export default async function(req,res) {
   if (req.method === 'GET') {
     const id = String(req.query?.id || '');
     if (id) {
-      for (let i=0;i<normalized.length;i++) { const s=normalized[i]; if(s.type==='save_learning'&&s.input.source_url&&!normalized.some((v,j)=>j<i&&v.type==='retrieve_source'&&v.input.url===s.input.source_url)) return res.status(400).json({error:'Add a retrieve_source step for the same source before saving sourced learning.'}); }
+      // Sourced-learning order is validated in the POST planner below.
     const run = (await db.query('SELECT id,title,objective,status,plan,result,error,attempts,created_at,updated_at,started_at,completed_at FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2',[id,owner])).rows[0];
       if (!run) return res.status(404).json({error:'Agent run not found.'});
       const steps = (await db.query('SELECT id,position,step_type,title,input,status,result,error,attempts,started_at,completed_at FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 ORDER BY position',[id,owner])).rows;
