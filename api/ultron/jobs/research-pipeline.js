@@ -36,7 +36,7 @@ async function ingestSkill(row) {
       catch(e) { throw new Error('Redirect target HTTP request failed before body processing: '+String(e?.message||e).slice(0,160)); } }
     catch(e) { throw new Error('Source HTTP request failed before body processing: '+String(e?.message||e).slice(0,160)); }
     if(response.status>=300&&response.status<400) {
-      const location=response.headers.get('location'), next=location?safeUrl(new URL(String(location),u).toString()):null;
+      const location=response.headers.get('location'), next=location?safeUrl(new URL(String(location),u.toString()).toString()):null;
       if(!next) throw new Error('Redirect target was not accepted as a public HTTPS source.');
       u=next;
       response=await fetch(u.toString(),{redirect:'manual',timeout_ms:12000,headers:{'Range':'bytes=0-262143','Accept':'text/html, text/plain, application/xhtml+xml','User-Agent':'ULTRON-Research/1.0'}});

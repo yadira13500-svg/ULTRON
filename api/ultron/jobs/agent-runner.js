@@ -17,7 +17,7 @@ async function verifyUrl(value) {
   let r=await fetch(u.toString(),{method:'HEAD',redirect:'manual',timeout_ms:10000,headers:{'User-Agent':'ULTRON-Agent/1.0'}});
   if(r.status===405||r.status===501) r=await fetch(u.toString(),{method:'GET',redirect:'manual',timeout_ms:10000,headers:{'Range':'bytes=0-0','User-Agent':'ULTRON-Agent/1.0'}});
   if(r.status>=300&&r.status<400) {
-    const loc=r.headers.get('location'), next=loc?safeUrl(new URL(String(loc),u).toString()):null;
+    const loc=r.headers.get('location'), next=loc?safeUrl(new URL(String(loc),u.toString()).toString()):null;
     if(!next) return {verified:false,url:u.toString(),status:r.status,error:'Redirect target was not accepted as a public HTTPS source.'};
     u=next;
     r=await fetch(u.toString(),{method:'HEAD',redirect:'manual',timeout_ms:10000,headers:{'User-Agent':'ULTRON-Agent/1.0'}});
