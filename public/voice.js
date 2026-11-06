@@ -35,6 +35,7 @@ async function engine() {
   const c = await probe();
   if (c.stt && window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) return 'server';
   if (BROWSER_SR_OK) return 'browser';
+  if (window.ULTRON_LOCAL_STT && window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) return 'local';
   return 'none';
 }
 
@@ -147,6 +148,33 @@ async function listenServer(handsFree, sid) {
   const r = await req('/voice', 'POST', { action: 'transcribe', audioB64, mimeType: send.type || 'audio/webm' });
   return { text: String(r.text || '').trim(), heard: true };
 }
+async function blobToPcm16k(blob) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!V.ctx) V.ctx = new AC();
+  const arr = await blob.arrayBuffer();
+  const buf = await new Promise((res, rej) => { const p = V.ctx.decodeAudioData(arr, res, rej); if (p && p.catch) p.catch(rej); });
+  const rate = 16000, len = Math.max(1, Math.ceil(buf.duration * rate));
+  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const off = new OAC(1, len, rate);
+  const src = off.createBufferSource(); src.buffer = buf; src.connect(off.destination); src.start();
+  return (await off.startRendering()).getChannelData(0);
+}
+async function listenLocal(handsFree, sid) {
+  const handle = { stop() { V.session++; if (V.stopRec) V.stopRec(); } };
+  recognition = handle;
+  setStatus(handsFree ? 'Voice conversation \u00b7 listening' : 'Listening \u00b7 speak now');
+  const c = core(); if (c) c.classList.add('listening');
+  let blob;
+  try { blob = await recordUtterance(sid); }
+  finally { if (c) c.classList.remove('listening'); if (recognition === handle) recognition = null; }
+  if (!voiceLoop) closeMic();
+  if (sid !== V.session) return null;
+  if (!blob || blob.size < 5000) return { text: '', heard: false };
+  const pcm = await blobToPcm16k(blob);
+  let text = String(await window.ULTRON_LOCAL_STT.transcribe(pcm, setStatus) || '').trim();
+  if (/^(thanks?( you)?\.?|you\.?|\[[^\]]*\]|\([^)]*\)|\.+)$/i.test(text)) text = '';
+  return { text, heard: !!text };
+}
 function listenBrowser(handsFree, sid) {
   return new Promise(resolve => {
     const inst = new SR();
@@ -231,7 +259,7 @@ window.startRecognition = async function (handsFree = false) {
   if (sid !== V.session) return;
   if (eng === 'none') { noEngine(); if (handsFree) stopLoop(); return; }
   try {
-    const r = eng === 'server' ? await listenServer(handsFree, sid) : await listenBrowser(handsFree, sid);
+    const r = eng === 'server' ? await listenServer(handsFree, sid) : eng === 'local' ? await listenLocal(handsFree, sid) : await listenBrowser(handsFree, sid);
     if (sid !== V.session || r === null) return;
     if (r.text) { deliver(r.text, handsFree); return; }
     if (r.error && FATAL.includes(r.error)) { setStatus(speechErrorMessage(r.error)); note(speechErrorMessage(r.error)); stopLoop(); return; }
