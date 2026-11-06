@@ -58,6 +58,15 @@ export default async function(req,res){
    const {rows}=await db.query('INSERT INTO ultron_preferences(owner_id,category,preference,confidence,source,confirmed) VALUES($1,$2,$3,$4,$5,true) RETURNING *',[owner,String(b.category).slice(0,60),String(b.preference).slice(0,1000),1,'user']);
    return res.status(201).json({preference:rows[0]});
   }
+  if(type==='preference_suggestion'){
+   const categories=['working_hours','routine','communication','priority'];
+   const category=String(b.category||'');const preference=String(b.preference||'').trim();
+   if(!categories.includes(category)||!preference||preference.length>1000)return res.status(400).json({error:'A supported preference category and value are required.'});
+   const existing=await db.query('SELECT id FROM ultron_preferences WHERE owner_id=$1 AND category=$2 AND lower(preference)=lower($3) LIMIT 1',[owner,category,preference]);
+   if(existing.rows[0])return res.json({suggested:false,duplicate:true,id:existing.rows[0].id,note:'This preference is already in your learning list.'});
+   const {rows}=await db.query('INSERT INTO ultron_preferences(owner_id,category,preference,confidence,source,confirmed) VALUES($1,$2,$3,$4,$5,false) RETURNING id,category,preference,confirmed,source',[owner,category,preference,0.65,'conversation_suggestion']);
+   return res.status(201).json({suggested:true,preference:rows[0],note:'Saved as a suggestion only. It will not guide ULTRON until you confirm it.'});
+  }
   if(type==='research_plan'){
    if(!String(b.topic||'').trim())return res.status(400).json({error:'Research topic required.'});
    const freq=['daily','weekly','monthly'].includes(b.frequency)?b.frequency:'weekly';
@@ -85,6 +94,7 @@ export default async function(req,res){
  }
  if(req.method==='PUT'){
   if(b.type==='preference'&&b.id){const {rows}=await db.query('UPDATE ultron_preferences SET preference=$3,confirmed=true,source=$4,updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *',[b.id,owner,String(b.preference||'').slice(0,1000),'user']);return res.json({preference:rows[0]||null});}
+  if(b.type==='preference_confirm'&&b.id){const {rows}=await db.query('UPDATE ultron_preferences SET confirmed=true,source=$3,confidence=1,updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *',[b.id,owner,'user']);return res.json({preference:rows[0]||null});}
   if(b.type==='research_plan'&&b.id){const {rows}=await db.query('UPDATE ultron_research_plans SET enabled=$3,frequency=COALESCE($4,frequency),boundary=COALESCE($5,boundary),updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *',[b.id,owner,b.enabled===true,['daily','weekly','monthly'].includes(b.frequency)?b.frequency:null,typeof b.boundary==='string'?b.boundary.slice(0,1000):null]);return res.json({plan:rows[0]||null});}
   if(b.type==='feedback'&&b.id){const {rows}=await db.query('UPDATE ultron_feedback SET status=$3 WHERE id=$1 AND owner_id=$2 RETURNING *',[b.id,owner,['accepted','dismissed','implemented'].includes(b.status)?b.status:'proposed']);return res.json({feedback:rows[0]||null});}
   if(b.type==='graph_suggestion'&&b.id){const status=['approved','rejected'].includes(b.status)?b.status:null;if(!status)return res.status(400).json({error:'Choose approve or reject.'});const s=await db.query("SELECT * FROM ultron_graph_suggestions WHERE id=$1 AND owner_id=$2 AND status='pending'",[b.id,owner]);if(!s.rows[0])return res.status(404).json({error:'Pending suggestion not found.'});const item=s.rows[0];if(status==='approved'){const ev=Array.isArray(item.evidence)?item.evidence:[];const evidence=String(item.rationale+' Evidence: '+ev.map(x=>(x.source||'Source')+': '+(x.excerpt||'')).join(' | ')).slice(0,1000);const sourceUrl=ev.map(x=>x.url).filter(Boolean).join(' | ').slice(0,1000);await db.query('INSERT INTO ultron_graph_edges(owner_id,from_id,to_id,relation,evidence,source_url,confidence) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(owner_id,from_id,to_id,relation) DO UPDATE SET evidence=EXCLUDED.evidence,source_url=EXCLUDED.source_url,confidence=EXCLUDED.confidence',[owner,item.from_id,item.to_id,item.relation,evidence,sourceUrl,Math.min(0.85,Number(item.evidence_strength)||0.7)]);}const updated=await db.query('UPDATE ultron_graph_suggestions SET status=$3,reviewed_at=now() WHERE id=$1 AND owner_id=$2 RETURNING id,status,reviewed_at',[b.id,owner,status]);return res.json({suggestion:updated.rows[0],promoted:status==='approved'});}
