@@ -3,7 +3,7 @@ import { db, scheduler } from 'hatchable';
 export const access = 'admin';
 export const methods = ['GET','POST','PUT'];
 
-const STEP_TYPES = new Set(['research_search','verify_url','retrieve_source','assess_claim','save_learning','create_task']);
+const STEP_TYPES = new Set(['research_search','verify_url','retrieve_source','assess_claim','save_learning','create_task','skill_apply']);
 const safeUrl = value => {
   try {
     const u = new URL(String(value || ''));
@@ -51,6 +51,8 @@ export default async function(req,res) {
       if ((type==='verify_url'||type==='retrieve_source') && !safeUrl(input.url)) return res.status(400).json({error:'Source steps require a public HTTPS URL.'});
       if (type==='save_learning' && (!String(input.topic||'').trim() || !String(input.summary||'').trim() || String(input.summary).length>3000)) return res.status(400).json({error:'Learning steps need a topic and a summary under 3,000 characters.'});
       if (type==='create_task' && (!String(input.title||'').trim() || String(input.title).length>180 || String(input.body||'').length>2000)) return res.status(400).json({error:'Task steps need a title under 180 characters and optional details under 2,000 characters.'});
+      if (type==='skill_apply' && (!String(input.skill_id||'').trim() || !String(input.task_description||'').trim() || !String(input.metric_label||'').trim() || !Number.isFinite(Number(input.baseline_value)) || !['higher_is_better','lower_is_better'].includes(input.metric_direction))) return res.status(400).json({error:'Skill application requires a skill ID, practical task, metric label, numeric baseline and metric direction.'});
+      if (type==='skill_apply') { const skill=(await db.query("SELECT id,title FROM ultron_skill_modules WHERE id=$1 AND owner_id=$2 AND status='mastered'",[input.skill_id,owner])).rows[0]; if(!skill)return res.status(409).json({error:'Only an owner-reviewed mastered skill can be attached to an agent mission.'}); }
       normalized.push({position:i+1,type,title:label,input});
     }
     for (let i=0;i<normalized.length;i++) { const s=normalized[i]; if(s.type==='save_learning'&&s.input.source_url&&!normalized.some((v,j)=>j<i&&v.type==='retrieve_source'&&v.input.url===s.input.source_url)) return res.status(400).json({error:'Add a retrieve_source step for the same source before saving sourced learning.'}); }

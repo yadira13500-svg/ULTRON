@@ -67,6 +67,16 @@ async function quickResearch(query) {
 }
 async function executeStep(step, owner, runId) {
   const input=step.input||{};
+  if(step.step_type==='skill_apply') {
+    const skill=(await db.query("SELECT id,title,concepts_json,objectives_json FROM ultron_skill_modules WHERE id=$1 AND owner_id=$2 AND status='mastered'",[input.skill_id,owner])).rows[0];
+    if(!skill) throw new Error('Skill is no longer owner-reviewed as mastered; application was blocked.');
+    const task=String(input.task_description||'').trim().slice(0,2000),metric=String(input.metric_label||'').trim().slice(0,120),baseline=Number(input.baseline_value),direction=['higher_is_better','lower_is_better'].includes(input.metric_direction)?input.metric_direction:'higher_is_better';
+    if(!task||!metric||!Number.isFinite(baseline)) throw new Error('Skill application requires a practical task and numeric baseline.');
+    const saved=await db.query("INSERT INTO ultron_skill_applications(owner_id,skill_id,run_id,task_description,metric_label,metric_direction,baseline_value,status) VALUES($1,$2,$3,$4,$5,$6,$7,'awaiting_outcome') RETURNING id,skill_id,run_id,task_description,metric_label,metric_direction,baseline_value,status,created_at",[owner,skill.id,runId,task,metric,direction,baseline]);
+    const check=(await db.query('SELECT id,status FROM ultron_skill_applications WHERE id=$1 AND owner_id=$2',[saved.rows[0].id,owner])).rows[0];
+    if(!check||check.status!=='awaiting_outcome') throw new Error('Skill application record was not persisted and verified.');
+    return {application:saved.rows[0],skillTitle:skill.title,conceptsConsulted:Array.isArray(skill.concepts_json)?skill.concepts_json.length:0,objectivesConsulted:Array.isArray(skill.objectives_json)?skill.objectives_json.length:0,operationVerified:true,verified:true,note:'A mastered skill is linked to this mission. Record a comparable post-task metric after the practical work to measure change.'};
+  }
   if(step.step_type==='research_search') {
     const data=await quickResearch(String(input.query));
     const results=(data.results||[]).filter(x=>x&&x.title&&x.url).slice(0,5).map(x=>({title:String(x.title).slice(0,240),url:String(x.url).slice(0,1000),snippet:String(x.snippet||'').slice(0,1200)}));
