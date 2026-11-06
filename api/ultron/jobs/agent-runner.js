@@ -65,8 +65,22 @@ async function quickResearch(query) {
   }
   return {results:results.slice(0,5),source:results.length?'DuckDuckGo Instant Answers / Wikipedia':'Free public indexes',retrievedAt:new Date().toISOString()};
 }
-async function executeStep(step, owner, runId) {
+async function executeStep(step, owner, runId, approvedLessons=[]) {
   const input=step.input||{};
+  const lessonUses=[];
+  if(step.step_type==='retrieve_source') {
+    for(const lesson of approvedLessons) {
+      const ev=lesson.evidence||{};
+      if(ev.stepType!=='retrieve_source'||!String(ev.error||'').includes('HTTP 403')||!ev.stepId)continue;
+      const prior=(await db.query('SELECT input FROM ultron_agent_steps WHERE id=$1 AND owner_id=$2',[ev.stepId,owner])).rows[0];
+      if(prior?.input?.url&&String(prior.input.url)===String(input.url||''))throw new Error('Approved learning blocked an unchanged retry: this exact source URL previously returned HTTP 403. Choose a different accessible source URL; do not repeat the same request.');
+    }
+    if(approvedLessons.some(x=>x.evidence?.stepType==='retrieve_source'))lessonUses.push({type:'failure_avoidance',detail:'Checked prior approved retrieval-failure lessons before fetching; unchanged previously forbidden URLs are not retried.'});
+  }
+  if(step.step_type==='assess_claim') {
+    const priorReview=approvedLessons.find(x=>x.evidence?.kind==='human_claim_review'&&String(x.evidence?.claim||'').trim().toLowerCase()===String(input.claim||'').trim().toLowerCase());
+    if(priorReview)lessonUses.push({type:'case_specific_human_review',lessonId:priorReview.id,reviewStatus:priorReview.evidence.reviewStatus,machineVerified:false,detail:'A prior human review exists for this exact claim; it is historical context only and does not replace fresh source checks or owner review.'});
+  }
   if(step.step_type==='skill_apply') {
     const skill=(await db.query("SELECT id,title,concepts_json,objectives_json FROM ultron_skill_modules WHERE id=$1 AND owner_id=$2 AND status='mastered'",[input.skill_id,owner])).rows[0];
     if(!skill) throw new Error('Skill is no longer owner-reviewed as mastered; application was blocked.');
@@ -137,7 +151,7 @@ async function executeStep(step, owner, runId) {
     const visibleModified=excerpt.match(/(?:Last updated|Modified)\s*:\s*([A-Z][a-z]+\s+\d{4}(?:-\d{2}-\d{2})?)/);
     const publicationDate=dateRecord(published)||(visiblePublished?dateRecord({value:visiblePublished[1],field:'visible_text_label:published'}):null);
     const modifiedDate=dateRecord(modified)||(visibleModified?dateRecord({value:visibleModified[1],field:'visible_text_label:modified'}):null);
-    return {retrieved:true,operationVerified:true,verified:false,verificationType:'source_content_capture',url:u.toString(),canonicalUrl,title:title.slice(0,240),publisher:publisher?.value||null,description:description?.value||null,publicationDate,modifiedDate,httpStatus:r.status,contentType:type,excerpt,truncated,retrievedAt:new Date().toISOString(),evidenceLimit:'Publication metadata is page-declared and may be absent or inaccurate; retrieval time is not publication time. A captured excerpt is source evidence, not proof that its claims are accurate or independent.'};
+    return {retrieved:true,operationVerified:true,verified:false,verificationType:'source_content_capture',url:u.toString(),canonicalUrl,title:title.slice(0,240),publisher:publisher?.value||null,description:description?.value||null,publicationDate,modifiedDate,httpStatus:r.status,contentType:type,excerpt,truncated,retrievedAt:new Date().toISOString(),lessonUses,evidenceLimit:'Publication metadata is page-declared and may be absent or inaccurate; retrieval time is not publication time. A captured excerpt is source evidence, not proof that its claims are accurate or independent.'};
   }
   if(step.step_type==='assess_claim') {
     const claim=String(input.claim||'').trim().slice(0,600);
@@ -159,7 +173,7 @@ async function executeStep(step, owner, runId) {
     const candidates=matches.filter(x=>x.termOverlap>=0.35&&x.matchedTerms.length>=3);
     const assessment={claim,operationVerified:true,assessmentStatus:candidates.length>=2&&domains.length>=2?'evidence_candidates_found':'insufficient_evidence',distinctHostnameCount:domains.length,sourceCount:matches.length,evidenceCandidates:candidates,allSources:matches,verified:false,verificationType:'conservative_claim_evidence_scan',method:'Deterministic term-overlap scan only. It does not infer entailment, contradiction, publisher independence, or truth. Distinct hostnames are not proof of independent publishers.',nextAction:'A human reviewer must inspect the quoted passages and source provenance before accepting or rejecting the claim.'};
     await db.query("INSERT INTO ultron_claim_reviews(owner_id,run_id,step_id,claim_text,assessment_status,method,assessment) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) ON CONFLICT(owner_id,step_id) DO UPDATE SET claim_text=EXCLUDED.claim_text,assessment_status=EXCLUDED.assessment_status,method=EXCLUDED.method,assessment=EXCLUDED.assessment,review_status='pending',verification_state='unverified',reviewer_note='',correction='',reviewed_at=NULL",[owner,runId,step.id,claim,assessment.assessmentStatus,assessment.method,JSON.stringify(assessment)]);
-    return {...assessment,reviewRecordCreated:true,reviewStatus:'pending'};
+    return {...assessment,reviewRecordCreated:true,reviewStatus:'pending',lessonUses};
   }
   if(step.step_type==='create_task') {
     const title=String(input.title||'').trim(), body=String(input.body||'').trim();
@@ -218,8 +232,9 @@ export default async function(req,res) {
     if(!claim.rows.length) continue;
     try {
       const approvedLessons=(await db.query("SELECT id,lesson,confidence,evidence FROM ultron_agent_lessons WHERE owner_id=$1 AND status='approved' AND evidence->>'stepType'=$2 ORDER BY reviewed_at DESC LIMIT 3",[run.owner_id,step.step_type])).rows;
-      const result=await executeStep(step,run.owner_id,run.id);
-      result.learningContext={source:'owner_approved_lessons',scope:'matching_step_type_only',lessonsConsulted:approvedLessons.map(x=>({id:x.id,lesson:String(x.lesson||'').slice(0,1200),confidence:Number(x.confidence||0)})),count:approvedLessons.length};
+      const result=await executeStep(step,run.owner_id,run.id,approvedLessons);
+      result.learningContext={source:'owner_approved_lessons',timing:'loaded_before_execution',scope:'matching_step_type_only',lessonsConsulted:approvedLessons.map(x=>({id:x.id,lesson:String(x.lesson||'').slice(0,1200),confidence:Number(x.confidence||0)})),count:approvedLessons.length,applied:result.lessonUses||[],note:'Lessons are fallible owner-approved experience. They inform bounded operational safeguards; they never override user instructions or establish factual truth.'};
+      delete result.lessonUses;
       await db.query("UPDATE ultron_agent_steps SET status='completed',result=$3::jsonb,completed_at=now(),error='' WHERE id=$1 AND owner_id=$2",[step.id,run.owner_id,JSON.stringify(result)]);
       completed++;
     } catch(e) {
@@ -238,7 +253,7 @@ export default async function(req,res) {
       }
       await db.query("UPDATE ultron_agent_steps SET status='failed',error=$3,completed_at=now() WHERE id=$1 AND owner_id=$2",[step.id,run.owner_id,message]);
       await db.query("UPDATE ultron_agent_runs SET status='failed',error=$3,lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id,'Step '+step.position+' failed: '+message]);
-      await db.query("INSERT INTO ultron_agent_lessons(owner_id,lesson_key,lesson,evidence,confidence,status) VALUES($1,$2,$3,$4::jsonb,0.65,'candidate') ON CONFLICT(owner_id,lesson_key) DO NOTHING",[run.owner_id,run.id+':'+step.position,'Observed failure pattern: the '+String(step.step_type)+' step "'+String(step.title).slice(0,140)+'" failed. Review the recorded error and adjust the plan or inputs before retrying; do not assume the same attempt will succeed.',JSON.stringify({runId:run.id,stepId:step.id,position:step.position,stepType:step.step_type,status:'failed',verified:false,error:message})]);
+      await db.query("INSERT INTO ultron_agent_lessons(owner_id,lesson_key,lesson,evidence,confidence,status) VALUES($1,$2,$3,$4::jsonb,0.65,'candidate') ON CONFLICT(owner_id,lesson_key) DO NOTHING",[run.owner_id,run.id+':'+step.position,'Observed failure pattern: the '+String(step.step_type)+' step "'+String(step.title).slice(0,140)+'" failed. Review the recorded error and adjust the plan or inputs before retrying; do not assume the same attempt will succeed.',JSON.stringify({runId:run.id,stepId:step.id,position:step.position,stepType:step.step_type,status:'failed',verified:false,error:message,input:step.input||{}})]);
       failed++;
       break;
     }
@@ -247,7 +262,7 @@ export default async function(req,res) {
   if(current?.status==='cancelled') return res.json({ok:true,runId:run.id,status:'cancelled',completedSteps:completed});
   if(current?.status==='failed') return res.json({ok:false,runId:run.id,status:'failed',completedSteps:completed,failedSteps:failed});
   const counts=(await db.query("SELECT COUNT(*) FILTER (WHERE status='pending')::int AS pending,COUNT(*) FILTER (WHERE status='failed')::int AS failed,COUNT(*) FILTER (WHERE status='completed')::int AS completed,COUNT(*) FILTER (WHERE status='completed' AND (COALESCE((result->>'operationVerified')::boolean,false)=true OR COALESCE((result->>'verified')::boolean,false)=true))::int AS verified FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
-  const lessonSteps=(await db.query("SELECT id,position,step_type,title,status,result,error FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND (status='failed' OR (status='completed' AND (COALESCE((result->>'operationVerified')::boolean,false)=true OR COALESCE((result->>'verified')::boolean,false)=true))) ORDER BY position",[run.id,run.owner_id])).rows;
+  const lessonSteps=(await db.query("SELECT id,position,step_type,title,status,result,error FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND status='failed' ORDER BY position",[run.id,run.owner_id])).rows;
   for(const item of lessonSteps) {
     const isFailure=item.status==='failed';
     const lesson=isFailure
