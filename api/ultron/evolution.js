@@ -11,7 +11,7 @@ export default async function(req,res){
    db.query('SELECT id,from_id,to_id,relation,evidence,source_url,confidence FROM ultron_graph_edges WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 300',[owner]),
    db.query('SELECT id,topic,frequency,boundary,enabled,last_run_at FROM ultron_research_plans WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner]),
    db.query('SELECT id,question,response_excerpt,rating,correction,proposed_improvement,status,created_at FROM ultron_feedback WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner]),
-   db.query('SELECT id,domain,title,objective,source_url,source_name,lesson,test_json,status,content_excerpt,ingested_at,last_error,created_at FROM ultron_skill_modules WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner]),
+   db.query('SELECT id,domain,title,objective,source_url,source_name,lesson,test_json,status,content_excerpt,ingested_at,last_error,concepts_json,objectives_json,weak_concepts_json,practice_tasks_json,created_at FROM ultron_skill_modules WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner]),
    db.query('SELECT id,from_id,to_id,relation,rationale,evidence,source_quality,evidence_strength,status,created_at,reviewed_at FROM ultron_graph_suggestions WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner]),
    db.query('SELECT id,lesson,evidence,confidence,status,created_at,reviewed_at FROM ultron_agent_lessons WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner]),
    db.query('SELECT id,run_id,step_id,claim_text,assessment_status,review_status,verification_state,method,assessment,reviewer_note,correction,created_at,reviewed_at FROM ultron_claim_reviews WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner])
