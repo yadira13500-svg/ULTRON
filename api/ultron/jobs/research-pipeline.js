@@ -15,14 +15,21 @@ const safeUrl = value => {
     return u;
   } catch { return null; }
 };
-const clean = html => String(html || '')
+const clean = html => {
+ let source=String(html||'');
+ const semanticStart=source.search(/<(?:main|article)\b/i);
+ const identifiedMain=source.search(/<[^>]+\bid\s*=\s*(['"])main\1[^>]*>/i);
+ const contentStart=semanticStart>=0?semanticStart:identifiedMain;
+ if(contentStart>=0) source=source.slice(contentStart);
+ return source
  .replace(/\sstyle=(['"])[\s\S]*?\1/gi,' ')
- .replace(/<(script|style|noscript|svg|nav|footer|header)[\s\S]*?<\/\1>/gi,' ')
+ .replace(/<(script|style|noscript|svg|nav|footer|header|aside)[\s\S]*?<\/\1>/gi,' ')
  .replace(/<br\s*\/?>|<\/p>|<\/h[1-6]>/gi,'\n')
  .replace(/<[^>]+>/g,' ')
  .replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/&quot;/gi,'"')
  .replace(/&#39;/g,"'").replace(/&lt;/gi,'<').replace(/&gt;/gi,'>')
  .replace(/[ \t\r]+/g,' ').replace(/\n\s*\n+/g,'\n').trim().slice(0,14000);
+};
 
 async function ingestSkill(row) {
   let u=safeUrl(row.source_url);
@@ -52,7 +59,8 @@ async function ingestSkill(row) {
       try { raw=new TextDecoder('utf-8').decode(await response.arrayBuffer()); }
       catch(e) { throw new Error('Source body could not be decoded safely: '+String(e?.message||e).slice(0,160)); }
     }
-    raw=raw.slice(0,120000);
+    // Preserve enough of large documentation HTML to reach its article container; the declared-size guard remains 1 MB.
+    raw=raw.slice(0,500000);
     const excerpt=clean(raw);
     if(excerpt.length<250) throw new Error('The page did not expose enough readable documentation text.');
     const lesson=(row.lesson ? row.lesson+'\n\n' : '')+'Extracted documentation notes (source page; review before relying on them):\n'+excerpt;

@@ -126,8 +126,9 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
       try { responseText=new TextDecoder('utf-8').decode(await r.arrayBuffer()); }
       catch(e) { throw new Error('Source body could not be decoded safely: '+String(e?.message||e).slice(0,160)); }
     }
-    const truncated=responseText.length>120000;
-    const raw=responseText.slice(0,120000);
+    // Some documentation sites place the article after a large navigation shell; retain enough HTML to reach the main content while respecting the 1 MB declared-size guard above.
+    const truncated=responseText.length>500000;
+    const raw=responseText.slice(0,500000);
     const lower=raw.toLowerCase(), a=lower.indexOf('<title'), b=a>=0?lower.indexOf('>',a):-1, c=b>=0?lower.indexOf('</title>',b):-1;
     const title=a>=0&&b>=0&&c>b?raw.slice(b+1,c).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim():'';
     const attr=(tag,name)=>{const m=String(tag||'').match(new RegExp(name+'="([^"]*)"','i'));return m?m[1].trim():'';};
@@ -144,7 +145,9 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
     let cleaned=raw.replace(/\sstyle=(['"])[\s\S]*?\1/gi,' ');
     const pageLower=cleaned.toLowerCase();
     const mainStart=pageLower.indexOf('<main'), articleStart=pageLower.indexOf('<article');
-    const contentStart=mainStart>=0?mainStart:articleStart;
+    const mainIdMatch=cleaned.match(/<[^>]+\\bid\\s*=\\s*(['\"])main\\1[^>]*>/i);
+    const mainIdStart=mainIdMatch?cleaned.indexOf(mainIdMatch[0]):-1;
+    const contentStart=mainStart>=0?mainStart:articleStart>=0?articleStart:mainIdStart;
     if(contentStart>=0) cleaned=cleaned.slice(contentStart);
     for(const name of ['style','script','noscript','nav','header','footer','aside']) {
       let lower=cleaned.toLowerCase(), start=lower.indexOf('<'+name);
