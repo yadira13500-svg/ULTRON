@@ -105,7 +105,10 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
     let u=safeUrl(input.url);
     if(!u) throw new Error('Only public HTTPS sources can be retrieved.');
     // Public HTTPS sources are accepted after URL validation; avoid a hard-coded publisher allowlist.
-    let r=await fetch(u.toString(),{method:'GET',redirect:'manual',timeout_ms:12000,headers:{'Range':'bytes=0-262143','Accept':'text/html,text/plain,application/xhtml+xml','User-Agent':'ULTRON-Agent/1.0'}});
+    let r;
+    try { try { r=await fetch(u.toString(),{method:'GET',redirect:'manual',timeout_ms:12000,headers:{'Range':'bytes=0-262143','Accept':'text/html,text/plain,application/xhtml+xml','User-Agent':'ULTRON-Agent/1.0'}}); }
+      catch(e) { throw new Error('Redirect target HTTP request failed before body processing: '+String(e?.message||e).slice(0,160)); } }
+    catch(e) { throw new Error('Source HTTP request failed before body processing: '+String(e?.message||e).slice(0,160)); }
     if(r.status>=300&&r.status<400) {
       const loc=r.headers.get('location'), next=loc?safeUrl(new URL(loc,u).toString()):null;
       if(!next) throw new Error('Redirect target was not accepted as a public HTTPS source.');
