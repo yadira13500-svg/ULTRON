@@ -132,6 +132,7 @@ export default async function(req,res) {
       const message=String(e?.message||e).slice(0,500);
       await db.query("UPDATE ultron_agent_steps SET status='failed',error=$3,completed_at=now() WHERE id=$1 AND owner_id=$2",[step.id,run.owner_id,message]);
       await db.query("UPDATE ultron_agent_runs SET status='failed',error=$3,lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id,'Step '+step.position+' failed: '+message]);
+      await db.query("INSERT INTO ultron_agent_lessons(owner_id,lesson_key,lesson,evidence,confidence,status) VALUES($1,$2,$3,$4::jsonb,0.65,'candidate') ON CONFLICT(owner_id,lesson_key) DO NOTHING",[run.owner_id,run.id+':'+step.position,'Observed failure pattern: the '+String(step.step_type)+' step "'+String(step.title).slice(0,140)+'" failed. Review the recorded error and adjust the plan or inputs before retrying; do not assume the same attempt will succeed.',JSON.stringify({runId:run.id,stepId:step.id,position:step.position,stepType:step.step_type,status:'failed',verified:false,error:message})]);
       failed++;
       break;
     }
@@ -140,6 +141,15 @@ export default async function(req,res) {
   if(current?.status==='cancelled') return res.json({ok:true,runId:run.id,status:'cancelled',completedSteps:completed});
   if(current?.status==='failed') return res.json({ok:false,runId:run.id,status:'failed',completedSteps:completed,failedSteps:failed});
   const counts=(await db.query("SELECT COUNT(*) FILTER (WHERE status='pending')::int AS pending,COUNT(*) FILTER (WHERE status='failed')::int AS failed,COUNT(*) FILTER (WHERE status='completed')::int AS completed,COUNT(*) FILTER (WHERE status='completed' AND COALESCE((result->>'verified')::boolean,false)=true)::int AS verified FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
+  const lessonSteps=(await db.query("SELECT id,position,step_type,title,status,result,error FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND (status='failed' OR (status='completed' AND COALESCE((result->>'verified')::boolean,false)=true)) ORDER BY position",[run.id,run.owner_id])).rows;
+  for(const item of lessonSteps) {
+    const isFailure=item.status==='failed';
+    const lesson=isFailure
+      ? 'Observed failure pattern: the '+String(item.step_type)+' step "'+String(item.title).slice(0,140)+'" failed. Review the recorded error and adjust the plan or inputs before retrying; do not assume the same attempt will succeed.'
+      : 'Observed verified outcome: the '+String(item.step_type)+' step "'+String(item.title).slice(0,140)+'" passed its explicit '+String((item.result||{}).verificationType||'')+' check. Re-check the result when the inputs or environment change.';
+    const evidence={runId:run.id,stepId:item.id,position:item.position,stepType:item.step_type,status:item.status,verified:!isFailure,error:isFailure?String(item.error||'').slice(0,500):'',resultType:String((item.result||{}).verificationType||'')};
+    await db.query("INSERT INTO ultron_agent_lessons(owner_id,lesson_key,lesson,evidence,confidence,status) VALUES($1,$2,$3,$4::jsonb,$5,'candidate') ON CONFLICT(owner_id,lesson_key) DO NOTHING",[run.owner_id,run.id+':'+item.position,lesson,JSON.stringify(evidence),isFailure?0.65:0.55]);
+  }
   if(counts.pending===0&&counts.failed===0) {
     const fullyVerified=counts.completed>0&&counts.verified===counts.completed;
     const summary={stepsCompleted:counts.completed,stepsVerified:counts.verified,verifiedWork:fullyVerified,verificationStatus:fullyVerified?'verified':'partial',completedAt:new Date().toISOString()};

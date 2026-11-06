@@ -5,16 +5,17 @@ const domains=['science','coding','business','world affairs','education'];
 export default async function(req,res){
  const owner=String(req.member.id), b=req.body||{};
  if(req.method==='GET'){
-  const [p,n,e,r,f,s,g]=await Promise.all([
+  const [p,n,e,r,f,s,g,l]=await Promise.all([
    db.query('SELECT id,category,preference,confidence,source,confirmed,updated_at FROM ultron_preferences WHERE owner_id=$1 ORDER BY updated_at DESC LIMIT 100',[owner]),
    db.query('SELECT id,label,node_type,description FROM ultron_graph_nodes WHERE owner_id=$1 ORDER BY label LIMIT 200',[owner]),
    db.query('SELECT id,from_id,to_id,relation,evidence,source_url,confidence FROM ultron_graph_edges WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 300',[owner]),
    db.query('SELECT id,topic,frequency,boundary,enabled,last_run_at FROM ultron_research_plans WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner]),
    db.query('SELECT id,question,response_excerpt,rating,correction,proposed_improvement,status,created_at FROM ultron_feedback WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner]),
    db.query('SELECT id,domain,title,objective,source_url,source_name,lesson,test_json,status,content_excerpt,ingested_at,last_error,created_at FROM ultron_skill_modules WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner]),
-   db.query('SELECT id,from_id,to_id,relation,rationale,evidence,source_quality,evidence_strength,status,created_at,reviewed_at FROM ultron_graph_suggestions WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner])
+   db.query('SELECT id,from_id,to_id,relation,rationale,evidence,source_quality,evidence_strength,status,created_at,reviewed_at FROM ultron_graph_suggestions WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner]),
+   db.query('SELECT id,lesson,evidence,confidence,status,created_at,reviewed_at FROM ultron_agent_lessons WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner])
   ]);
-  return res.json({preferences:p.rows,nodes:n.rows,edges:e.rows,researchPlans:r.rows,feedback:f.rows,skills:s.rows,suggestions:g.rows,domains});
+  return res.json({preferences:p.rows,nodes:n.rows,edges:e.rows,researchPlans:r.rows,feedback:f.rows,skills:s.rows,suggestions:g.rows,agentLessons:l.rows,domains});
  }
  if(req.method==='POST'){
   const type=String(b.type||'');
@@ -97,6 +98,7 @@ export default async function(req,res){
   if(b.type==='preference_confirm'&&b.id){const {rows}=await db.query('UPDATE ultron_preferences SET confirmed=true,source=$3,confidence=1,updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *',[b.id,owner,'user']);return res.json({preference:rows[0]||null});}
   if(b.type==='research_plan'&&b.id){const {rows}=await db.query('UPDATE ultron_research_plans SET enabled=$3,frequency=COALESCE($4,frequency),boundary=COALESCE($5,boundary),updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *',[b.id,owner,b.enabled===true,['daily','weekly','monthly'].includes(b.frequency)?b.frequency:null,typeof b.boundary==='string'?b.boundary.slice(0,1000):null]);return res.json({plan:rows[0]||null});}
   if(b.type==='feedback'&&b.id){const {rows}=await db.query('UPDATE ultron_feedback SET status=$3 WHERE id=$1 AND owner_id=$2 RETURNING *',[b.id,owner,['accepted','dismissed','implemented'].includes(b.status)?b.status:'proposed']);return res.json({feedback:rows[0]||null});}
+  if(b.type==='agent_lesson'&&b.id){const status=['approved','dismissed'].includes(b.status)?b.status:null;if(!status)return res.status(400).json({error:'Choose approve or dismiss.'});const {rows}=await db.query("UPDATE ultron_agent_lessons SET status=$3,reviewed_at=now() WHERE id=$1 AND owner_id=$2 AND status='candidate' RETURNING id,status,reviewed_at",[b.id,owner,status]);return res.json({lesson:rows[0]||null,approved:status==='approved'});}
   if(b.type==='graph_suggestion'&&b.id){const status=['approved','rejected'].includes(b.status)?b.status:null;if(!status)return res.status(400).json({error:'Choose approve or reject.'});const s=await db.query("SELECT * FROM ultron_graph_suggestions WHERE id=$1 AND owner_id=$2 AND status='pending'",[b.id,owner]);if(!s.rows[0])return res.status(404).json({error:'Pending suggestion not found.'});const item=s.rows[0];if(status==='approved'){const ev=Array.isArray(item.evidence)?item.evidence:[];const evidence=String(item.rationale+' Evidence: '+ev.map(x=>(x.source||'Source')+': '+(x.excerpt||'')).join(' | ')).slice(0,1000);const sourceUrl=ev.map(x=>x.url).filter(Boolean).join(' | ').slice(0,1000);await db.query('INSERT INTO ultron_graph_edges(owner_id,from_id,to_id,relation,evidence,source_url,confidence) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(owner_id,from_id,to_id,relation) DO UPDATE SET evidence=EXCLUDED.evidence,source_url=EXCLUDED.source_url,confidence=EXCLUDED.confidence',[owner,item.from_id,item.to_id,item.relation,evidence,sourceUrl,Math.min(0.85,Number(item.evidence_strength)||0.7)]);}const updated=await db.query('UPDATE ultron_graph_suggestions SET status=$3,reviewed_at=now() WHERE id=$1 AND owner_id=$2 RETURNING id,status,reviewed_at',[b.id,owner,status]);return res.json({suggestion:updated.rows[0],promoted:status==='approved'});}
   return res.status(400).json({error:'Unsupported update.'});
  }
