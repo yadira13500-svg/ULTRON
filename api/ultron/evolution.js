@@ -134,7 +134,7 @@ export default async function(req,res){
    if(!assessment)return res.status(404).json({error:'Assessment not found.'});
    const mastered=score>=80&&b.practical_pass===true&&weak.length===0;
    await db.query("UPDATE ultron_skill_modules SET status=$3,weak_concepts_json=$4::jsonb,practice_tasks_json=$5::jsonb WHERE id=$1 AND owner_id=$2",[assessment.skill_id,owner,mastered?'mastered':'ready',JSON.stringify(weak),JSON.stringify(practice)]);
-   let practiceTasksCreated=0;for(const task of practice){const saved=await db.query("INSERT INTO ultron_items(owner_id,kind,title,body,status) VALUES($1,'task',$2,$3,'open') RETURNING id",[owner,('Practice: '+task).slice(0,180),('Targeted skill practice. Focus on: '+weak.join(', ')).slice(0,2000)]);if(saved.rowCount)practiceTasksCreated++;}
+   let practiceTasksCreated=0;for(const task of practice){const saved=await db.query("INSERT INTO ultron_items(owner_id,kind,title,body,status) VALUES($1,'task',$2,$3,'open') RETURNING id",[owner,('Practice: '+task).slice(0,180),('Practical evidence required: '+task+' Submit the actual code or work, a representative input, expected output, actual output, and a short explanation. Keep the original input unchanged where relevant. Do not mark the skill mastered until the owner reviews the submitted work and verification evidence.').slice(0,2000)]);if(saved.rowCount)practiceTasksCreated++;}
    return res.json({assessment,mastered,practiceTasksCreated,note:mastered?'Knowledge score and practical demonstration both meet the mastery threshold.':'Not yet mastered. Targeted practice has been recorded and added to your task list.'});
   }
   if(b.type==='skill_application_measure'&&b.id){
