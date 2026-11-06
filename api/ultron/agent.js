@@ -3,7 +3,7 @@ import { db, scheduler } from 'hatchable';
 export const access = 'admin';
 export const methods = ['GET','POST','PUT'];
 
-const STEP_TYPES = new Set(['research_search','verify_url','retrieve_source','save_learning','create_task']);
+const STEP_TYPES = new Set(['research_search','verify_url','retrieve_source','assess_claim','save_learning','create_task']);
 const safeUrl = value => {
   try {
     const u = new URL(String(value || ''));
@@ -46,12 +46,15 @@ export default async function(req,res) {
       const input=s.input && typeof s.input === 'object' && !Array.isArray(s.input) ? s.input : {};
       if (!STEP_TYPES.has(type) || !label || label.length>180) return res.status(400).json({error:'Step '+(i+1)+' has an unsupported type or title.'});
       if (type==='research_search' && (!String(input.query||'').trim() || String(input.query).length>300)) return res.status(400).json({error:'Research steps need a query under 300 characters.'});
+      if (type==='assess_claim' && (!String(input.claim||'').trim() || String(input.claim).length>600 || !Array.isArray(input.source_urls) || input.source_urls.length<2 || input.source_urls.length>4 || new Set(input.source_urls).size!==input.source_urls.length)) return res.status(400).json({error:'Claim assessment needs a claim under 600 characters and 2–4 distinct source URLs.'});
+      if (type==='assess_claim' && (!String(input.claim||'').trim() || String(input.claim).length>600 || !Array.isArray(input.source_urls) || input.source_urls.length<2 || input.source_urls.length>4 || new Set(input.source_urls).size!==input.source_urls.length)) return res.status(400).json({error:'Claim assessment needs a claim under 600 characters and 2–4 distinct source URLs.'});
       if ((type==='verify_url'||type==='retrieve_source') && !safeUrl(input.url)) return res.status(400).json({error:'Source steps require a public HTTPS URL.'});
       if (type==='save_learning' && (!String(input.topic||'').trim() || !String(input.summary||'').trim() || String(input.summary).length>3000)) return res.status(400).json({error:'Learning steps need a topic and a summary under 3,000 characters.'});
       if (type==='create_task' && (!String(input.title||'').trim() || String(input.title).length>180 || String(input.body||'').length>2000)) return res.status(400).json({error:'Task steps need a title under 180 characters and optional details under 2,000 characters.'});
       normalized.push({position:i+1,type,title:label,input});
     }
     for (let i=0;i<normalized.length;i++) { const s=normalized[i]; if(s.type==='save_learning'&&s.input.source_url&&!normalized.some((v,j)=>j<i&&v.type==='retrieve_source'&&v.input.url===s.input.source_url)) return res.status(400).json({error:'Add a retrieve_source step for the same source before saving sourced learning.'}); }
+    for (let i=0;i<normalized.length;i++) { const s=normalized[i]; if(s.type==='assess_claim' && (!Array.isArray(s.input.source_urls) || !s.input.source_urls.every(url=>normalized.some((v,j)=>j<i&&v.type==='retrieve_source'&&v.input.url===url)))) return res.status(400).json({error:'Capture each exact source URL before assessing a claim.'}); }
     const run = (await db.query("INSERT INTO ultron_agent_runs(owner_id,title,objective,plan) VALUES($1,$2,$3,$4::jsonb) RETURNING id,title,objective,status,created_at",[owner,title,objective,JSON.stringify(normalized)])).rows[0];
     for (const s of normalized) {
       await db.query('INSERT INTO ultron_agent_steps(run_id,owner_id,position,step_type,title,input) VALUES($1,$2,$3,$4,$5,$6::jsonb)',[run.id,owner,s.position,s.type,s.title,JSON.stringify(s.input)]);

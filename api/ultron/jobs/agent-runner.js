@@ -110,6 +110,26 @@ async function executeStep(step, owner, runId) {
     if(!excerpt) throw new Error('No readable page text was extracted.');
     return {retrieved:true,verified:false,verificationType:'source_content_capture',url:u.toString(),httpStatus:r.status,contentType:type,title:title.slice(0,240),excerpt,truncated,retrievedAt:new Date().toISOString(),evidenceLimit:'A captured page excerpt is source evidence, not proof that its claims are accurate or independent.'};
   }
+  if(step.step_type==='assess_claim') {
+    const claim=String(input.claim||'').trim().slice(0,600);
+    const urls=Array.isArray(input.source_urls)?input.source_urls:[];
+    if(!claim||urls.length<2||urls.length>4) throw new Error('Claim assessment requires one claim and 2–4 captured sources.');
+    const prior=(await db.query("SELECT result FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND step_type='retrieve_source' AND status='completed' ORDER BY position",[runId,owner])).rows.map(x=>x.result||{});
+    const evidence=urls.map(url=>prior.find(x=>x.url===url&&x.retrieved===true&&x.verificationType==='source_content_capture')).filter(Boolean);
+    if(evidence.length!==urls.length) throw new Error('Every source must be captured successfully before claim assessment.');
+    const stop=new Set(['about','after','again','against','also','among','because','been','being','between','could','does','during','each','from','have','into','more','most','other','over','same','should','some','such','than','that','their','there','these','they','this','those','through','under','very','were','what','when','where','which','while','with','would','your']);
+    const terms=(claim.toLowerCase().match(/[a-z0-9]{3,}/g)||[]).filter(x=>!stop.has(x));
+    const matches=evidence.map(source=>{
+      const sentences=String(source.excerpt||'').split(/(?<=[.!?])\\s+/).slice(0,180);
+      let best={sentence:'',overlap:0,matchedTerms:[]};
+      for(const sentence of sentences){const words=new Set((sentence.toLowerCase().match(/[a-z0-9]{3,}/g)||[]).filter(x=>!stop.has(x)));const hit=terms.filter(x=>words.has(x));const ratio=terms.length?hit.length/terms.length:0;if(ratio>best.overlap)best={sentence:sentence.slice(0,700),overlap:Number(ratio.toFixed(3)),matchedTerms:hit};}
+      let host='';try{host=new URL(source.url).hostname.toLowerCase().replace(/^www\\./,'')}catch{}
+      return {title:source.title||'',url:source.url,host,excerptCandidate:best.sentence,termOverlap:best.overlap,matchedTerms:best.matchedTerms,retrievedAt:source.retrievedAt||null};
+    });
+    const domains=[...new Set(matches.map(x=>x.host).filter(Boolean))];
+    const candidates=matches.filter(x=>x.termOverlap>=0.35&&x.matchedTerms.length>=3);
+    return {claim,assessmentStatus:candidates.length>=2&&domains.length>=2?'evidence_candidates_found':'insufficient_evidence',independentDomainCount:domains.length,sourceCount:matches.length,evidenceCandidates:candidates,allSources:matches,verified:false,verificationType:'conservative_claim_evidence_scan',method:'Deterministic term-overlap scan only. It does not infer entailment, contradiction, source independence, or truth.',nextAction:'A human or a separately authorized reasoning step must inspect the quoted passages and source provenance before accepting or rejecting the claim.'};
+  }
   if(step.step_type==='create_task') {
     const title=String(input.title||'').trim(), body=String(input.body||'').trim();
     const inserted=await db.query("INSERT INTO ultron_items(owner_id,kind,title,body,status) VALUES($1,'task',$2,$3,'open') RETURNING id,title,kind,status,created_at",[owner,title,body]);
