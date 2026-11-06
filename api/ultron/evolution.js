@@ -41,7 +41,7 @@ export default async function(req,res){
    for(let i=0;i<rows.length;i++)for(let j=i+1;j<rows.length;j++){
     const a=rows[i],c=rows[j];if(a.topic===c.topic||a.source_url===c.source_url)continue;checked++;
     const shared=named(a.summary+' '+a.topic).filter(v=>named(c.summary+' '+c.topic).includes(v));if(!shared.length)continue;
-    const rel=relation(a.summary)||relation(c.summary);if(!rel)continue;
+    const relA=relation(a.summary),relB=relation(c.summary);if(!relA||!relB||relA!==relB)continue;const rel=relA;
     const evidence=[a,c].map(x=>({source:x.source_name||new URL(x.source_url).hostname,url:x.source_url,topic:x.topic,excerpt:String(x.summary||'').slice(0,700),published_at:x.published_at||null,status:x.source_status||'unchecked',quality:quality(x)}));
     const rationale='Both independently saved sources mention '+shared[0]+' and contain explicit relationship language ('+rel+'). This is a candidate interpretation, not a verified causal conclusion.';
     const from=await db.query("INSERT INTO ultron_graph_nodes(owner_id,label,node_type,description) VALUES($1,$2,'topic','') ON CONFLICT(owner_id,label,node_type) DO UPDATE SET label=EXCLUDED.label RETURNING id",[owner,String(a.topic).slice(0,180)]);
