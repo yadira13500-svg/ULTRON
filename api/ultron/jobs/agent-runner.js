@@ -119,8 +119,9 @@ async function executeStep(step, owner, runId) {
     const publisher=metaValue(['og:site_name','publisher','application-name']);
     const description=metaValue(['og:description','description']);
     const dateRecord=x=>{if(!x)return null;const parsed=Date.parse(x.value);return Number.isFinite(parsed)?{value:x.value,field:x.field,iso:new Date(parsed).toISOString()}:{value:x.value,field:x.field,iso:null};};
-    let cleaned=raw;
-    const pageLower=raw.toLowerCase();
+    // Remove inline CSS before stripping tags; otherwise style="..." attributes leak into the excerpt and can crowd out article text.
+    let cleaned=raw.replace(/\sstyle=(['"])[\s\S]*?\1/gi,' ');
+    const pageLower=cleaned.toLowerCase();
     const mainStart=pageLower.indexOf('<main'), articleStart=pageLower.indexOf('<article');
     const contentStart=mainStart>=0?mainStart:articleStart;
     if(contentStart>=0) cleaned=raw.slice(contentStart);
