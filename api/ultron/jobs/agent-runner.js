@@ -205,7 +205,7 @@ export default async function(req,res) {
   for(const step of steps) {
     const state=(await db.query("SELECT status FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
     if(!state||state.status==='cancelled') break;
-    const claim=await db.query("UPDATE ultron_agent_steps SET status='running',attempts=attempts+1,started_at=now(),error='' WHERE id=$1 AND owner_id=$2 AND status='pending' RETURNING id",[step.id,run.owner_id]);
+    const claim=await db.query("UPDATE ultron_agent_steps SET status='running',attempts=attempts+1,started_at=now(),error='' WHERE id=$1 AND owner_id=$2 AND status='pending' RETURNING id,attempts",[step.id,run.owner_id]);
     if(!claim.rows.length) continue;
     try {
       const approvedLessons=(await db.query("SELECT id,lesson,confidence,evidence FROM ultron_agent_lessons WHERE owner_id=$1 AND status='approved' AND evidence->>'stepType'=$2 ORDER BY reviewed_at DESC LIMIT 3",[run.owner_id,step.step_type])).rows;
@@ -215,6 +215,18 @@ export default async function(req,res) {
       completed++;
     } catch(e) {
       const message=String(e?.message||e).slice(0,500);
+      const attempt=Number(claim.rows[0]?.attempts||1);
+      const transient=/\b(408|425|429|500|502|503|504)\b|timeout|temporarily unavailable|network|fetch failed|ECONNRESET|ETIMEDOUT|socket hang up/i.test(message);
+      if(transient&&attempt<3) {
+        await db.query("UPDATE ultron_agent_steps SET status='pending',error=$3,started_at=NULL WHERE id=$1 AND owner_id=$2",[step.id,run.owner_id,'Transient failure on attempt '+attempt+': '+message]);
+        await db.query("UPDATE ultron_agent_runs SET status='queued',error=$3,lease_until=NULL,updated_at=now() WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id,'Retrying transient step failure: '+message]);
+        try {
+          await scheduler.at(new Date(Date.now()+60000),ROUTE,{payload:{runId:run.id},name:'ultron-agent-retry-'+run.id+'-'+attempt});
+          return res.json({ok:true,runId:run.id,status:'queued',retryScheduled:true,attempt,nextAttempt:attempt+1,note:'A transient service failure was detected. ULTRON will retry this step without repeating completed steps.'});
+        } catch {
+          return res.json({ok:true,runId:run.id,status:'queued',retryScheduled:false,attempt,nextAttempt:attempt+1,note:'Retry remains queued for the hourly recovery worker.'});
+        }
+      }
       await db.query("UPDATE ultron_agent_steps SET status='failed',error=$3,completed_at=now() WHERE id=$1 AND owner_id=$2",[step.id,run.owner_id,message]);
       await db.query("UPDATE ultron_agent_runs SET status='failed',error=$3,lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id,'Step '+step.position+' failed: '+message]);
       await db.query("INSERT INTO ultron_agent_lessons(owner_id,lesson_key,lesson,evidence,confidence,status) VALUES($1,$2,$3,$4::jsonb,0.65,'candidate') ON CONFLICT(owner_id,lesson_key) DO NOTHING",[run.owner_id,run.id+':'+step.position,'Observed failure pattern: the '+String(step.step_type)+' step "'+String(step.title).slice(0,140)+'" failed. Review the recorded error and adjust the plan or inputs before retrying; do not assume the same attempt will succeed.',JSON.stringify({runId:run.id,stepId:step.id,position:step.position,stepType:step.step_type,status:'failed',verified:false,error:message})]);
