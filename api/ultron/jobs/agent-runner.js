@@ -34,7 +34,7 @@ async function quickResearch(query) {
       const chunks=html.split('class="result__a"').slice(1);
       for(const chunk of chunks) {
         const href=(chunk.split('href="')[1]||'').split('"')[0];
-        const title=(chunk.split('>')[1]||'').split('</a')[0].replace(/<[^>]*>/g,' ').replace(/&amp;/g,'&').replace(/&quot;/g,'"').trim();
+        const title=(chunk.split('</a')[0].split('>').slice(1).join('>')||'').replace(/<[^>]*>/g,' ').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/\s+/g,' ').trim();
         try {
           const link=new URL(href,'https://duckduckgo.com'), target=link.searchParams.get('uddg')||link.href, u=new URL(target);
           if(title&&(u.protocol==='https:'||u.protocol==='http:')&&!/(duckduckgo|google)\./i.test(u.hostname))results.push({title,url:u.href,snippet:''});
