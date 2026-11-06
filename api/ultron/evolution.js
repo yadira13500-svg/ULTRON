@@ -116,11 +116,23 @@ export default async function(req,res){
   if(b.type==='preference_confirm'&&b.id){const {rows}=await db.query('UPDATE ultron_preferences SET confirmed=true,source=$3,confidence=1,updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *',[b.id,owner,'user']);return res.json({preference:rows[0]||null});}
   if(b.type==='research_plan'&&b.id){const {rows}=await db.query('UPDATE ultron_research_plans SET enabled=$3,frequency=COALESCE($4,frequency),boundary=COALESCE($5,boundary),updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *',[b.id,owner,b.enabled===true,['daily','weekly','monthly'].includes(b.frequency)?b.frequency:null,typeof b.boundary==='string'?b.boundary.slice(0,1000):null]);return res.json({plan:rows[0]||null});}
   if(b.type==='feedback'&&b.id){const {rows}=await db.query('UPDATE ultron_feedback SET status=$3 WHERE id=$1 AND owner_id=$2 RETURNING *',[b.id,owner,['accepted','dismissed','implemented'].includes(b.status)?b.status:'proposed']);return res.json({feedback:rows[0]||null});}
+  if(b.type==='skill_practical_submission'&&b.id){
+   const task=String(b.task||'').trim().slice(0,1000),work=String(b.submitted_work||'').trim().slice(0,12000),output=String(b.test_output||'').trim().slice(0,4000),explanation=String(b.explanation||'').trim().slice(0,2000);
+   if(b.owner_attested!==true)return res.status(400).json({error:'Confirm that this is your own practical work before submitting it.'});
+   if(!task||!work||!output||!explanation)return res.status(400).json({error:'Submit the task, your actual work, test output and explanation.'});
+   const existing=(await db.query('SELECT id,practical_evidence FROM ultron_skill_assessments WHERE id=$1 AND owner_id=$2',[b.id,owner])).rows[0];
+   if(!existing)return res.status(404).json({error:'Assessment not found.'});
+   const evidence={task,submitted_work:work,verification_method:'Owner-provided test output: '+output,reviewer_result:'Owner-submitted practical evidence; awaiting owner review. No practical pass or mastery has been granted.',explanation,owner_attested:true,submitted_at:new Date().toISOString()};
+   const saved=(await db.query('UPDATE ultron_skill_assessments SET practical_evidence=$3::jsonb,practical_pass=false WHERE id=$1 AND owner_id=$2 RETURNING id,skill_id,score,practical_pass,practical_evidence,status',[b.id,owner,JSON.stringify(evidence)])).rows[0];
+   return res.json({assessment:saved,submitted:true,mastered:false,note:'Your practical work is saved for review. It has not been marked as passed or mastered.'});
+  }
   if(b.type==='skill_assessment'&&b.id){
    const score=Number(b.score);
    if(!Number.isFinite(score)||score<0||score>100||typeof b.practical_pass!=='boolean')return res.status(400).json({error:'Provide a knowledge score from 0 to 100 and an explicit practical pass/fail result.'});
-   const practical=b.practical_evidence&&typeof b.practical_evidence==='object'&&!Array.isArray(b.practical_evidence)?b.practical_evidence:{};
-   const practicalEvidence={task:String(practical.task||'').trim().slice(0,1000),submitted_work:String(practical.submitted_work||'').trim().slice(0,12000),verification_method:String(practical.verification_method||'').trim().slice(0,1000),reviewer_result:String(practical.reviewer_result||'').trim().slice(0,2000)};
+   const supplied=b.practical_evidence&&typeof b.practical_evidence==='object'&&!Array.isArray(b.practical_evidence)?b.practical_evidence:{};
+   const priorEvidence=(await db.query('SELECT practical_evidence FROM ultron_skill_assessments WHERE id=$1 AND owner_id=$2',[b.id,owner])).rows[0]?.practical_evidence||{};
+   const practical=Object.keys(supplied).length?supplied:priorEvidence;
+   const practicalEvidence={task:String(practical.task||'').trim().slice(0,1000),submitted_work:String(practical.submitted_work||'').trim().slice(0,12000),verification_method:String(practical.verification_method||'').trim().slice(0,4000),reviewer_result:String(practical.reviewer_result||'').trim().slice(0,2000),explanation:String(practical.explanation||'').trim().slice(0,2000),owner_attested:practical.owner_attested===true,submitted_at:practical.submitted_at||null};
    if(b.practical_pass===true&&(!practicalEvidence.task||!practicalEvidence.submitted_work||!practicalEvidence.verification_method||!practicalEvidence.reviewer_result))return res.status(400).json({error:'A practical pass requires the task, submitted work, verification method and reviewer result to be stored as evidence.'});
    const notes=String(b.reviewer_notes||'').trim().slice(0,2000);
    const weak=Array.isArray(b.weak_concepts)?b.weak_concepts.slice(0,20).map(x=>String(x).slice(0,100)):[];
