@@ -173,10 +173,11 @@ function renderAgentRuns(){
 async function loadAgentRuns(){
  try{
   agentRuns=(await req('/agent')).runs||[];renderAgentRuns();
-  const completed=agentRuns.filter(x=>x.status==='completed').length,failed=agentRuns.filter(x=>x.status==='failed').length;
+  const completed=agentRuns.filter(x=>x.status==='completed').length,failed=agentRuns.filter(x=>x.status==='failed').length,verified=agentRuns.filter(x=>x.status==='completed'&&x.result?.verificationStatus==='operationally_verified').length;
   const lessons=agentRuns.reduce((n,x)=>n+Number(x.result?.learning?.distinctApprovedLessonsConsulted||0),0);
   $('#agentMetricRuns').textContent=agentRuns.length;
   $('#agentMetricCompleted').textContent=completed;
+  $('#agentMetricVerified').textContent=verified;
   $('#agentMetricFailed').textContent=failed;
   $('#agentMetricLessons').textContent=lessons;
   $('#agentStatus').textContent=agentRuns.filter(x=>['queued','running'].includes(x.status)).length+' active · '+agentRuns.length+' recent mission(s) · '+(completed+failed?Math.round(completed/(completed+failed)*100)+'% completion rate':'no completed outcomes yet')+' · free-first execution';
