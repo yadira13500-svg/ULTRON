@@ -1,4 +1,5 @@
-import { googleNewsSearch, NEWS_COUNTRIES } from 'lib/rss.js';
+import { NEWS_COUNTRIES } from 'lib/rss.js';
+import { searchPublicWeb } from 'lib/search.js';
 
 export const access = 'admin';
 export const methods = ['GET'];
@@ -18,7 +19,7 @@ export default async function (req, res) {
   };
   if (!topics[category]) return res.status(400).json({ error: 'Unsupported news category.' });
   try {
-    const data = await googleNewsSearch(topics[category], country, 18);
+    const data = await searchPublicWeb(topics[category] + ' news', country);
     return res.json({ ...data, country_code: country, category, refresh_note: 'Headlines are supplied by Google News RSS. Publication times and availability depend on each publisher.' });
   } catch (error) {
     console.error('ULTRON news feed unavailable', String(error?.message || error).slice(0, 180));
