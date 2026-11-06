@@ -51,6 +51,7 @@ export default async function(req,res) {
       if (type==='create_task' && (!String(input.title||'').trim() || String(input.title).length>180 || String(input.body||'').length>2000)) return res.status(400).json({error:'Task steps need a title under 180 characters and optional details under 2,000 characters.'});
       normalized.push({position:i+1,type,title:label,input});
     }
+    for (let i=0;i<normalized.length;i++) { const s=normalized[i]; if(s.type==='save_learning'&&s.input.source_url&&!normalized.some((v,j)=>j<i&&v.type==='retrieve_source'&&v.input.url===s.input.source_url)) return res.status(400).json({error:'Add a retrieve_source step for the same source before saving sourced learning.'}); }
     const run = (await db.query("INSERT INTO ultron_agent_runs(owner_id,title,objective,plan) VALUES($1,$2,$3,$4::jsonb) RETURNING id,title,objective,status,created_at",[owner,title,objective,JSON.stringify(normalized)])).rows[0];
     for (const s of normalized) {
       await db.query('INSERT INTO ultron_agent_steps(run_id,owner_id,position,step_type,title,input) VALUES($1,$2,$3,$4,$5,$6::jsonb)',[run.id,owner,s.position,s.type,s.title,JSON.stringify(s.input)]);
