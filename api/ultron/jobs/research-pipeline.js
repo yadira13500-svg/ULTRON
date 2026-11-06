@@ -16,6 +16,7 @@ const safeUrl = value => {
   } catch { return null; }
 };
 const clean = html => String(html || '')
+ .replace(/\sstyle=(['"])[\s\S]*?\1/gi,' ')
  .replace(/<(script|style|noscript|svg|nav|footer|header)[\s\S]*?<\/\1>/gi,' ')
  .replace(/<br\s*\/?>|<\/p>|<\/h[1-6]>/gi,'\n')
  .replace(/<[^>]+>/g,' ')
@@ -30,11 +31,19 @@ async function ingestSkill(row) {
     return 'blocked';
   }
   try {
-    const response=await fetch(u.toString(),{redirect:'manual',timeout_ms:12000,headers:{'Accept':'text/html, text/plain, application/xhtml+xml','User-Agent':'ULTRON-Research/1.0'}});
+    let response=await fetch(u.toString(),{redirect:'manual',timeout_ms:12000,headers:{'Range':'bytes=0-262143','Accept':'text/html, text/plain, application/xhtml+xml','User-Agent':'ULTRON-Research/1.0'}});
+    if(response.status>=300&&response.status<400) {
+      const location=response.headers.get('location'), next=location?safeUrl(new URL(location,u).toString()):null;
+      if(!next) throw new Error('Redirect target was not accepted as a public HTTPS source.');
+      u=next;
+      response=await fetch(u.toString(),{redirect:'manual',timeout_ms:12000,headers:{'Range':'bytes=0-262143','Accept':'text/html, text/plain, application/xhtml+xml','User-Agent':'ULTRON-Research/1.0'}});
+    }
     if(!response.ok) throw new Error('Source returned HTTP '+response.status);
     const type=String(response.headers.get('content-type')||'').toLowerCase();
-    if(type && !/(text\/html|text\/plain|application\/xhtml\+xml)/.test(type)) throw new Error('Source is not an HTML or text documentation page.');
-    const raw=await response.text();
+    if(!/(text\/html|text\/plain|application\/xhtml\+xml)/.test(type)) throw new Error('Source is not an HTML or text documentation page.');
+    const declared=Number(response.headers.get('content-length')||0);
+    if(declared>1048576) throw new Error('Source exceeds the 1 MB retrieval limit.');
+    const raw=(await response.text()).slice(0,120000);
     const excerpt=clean(raw);
     if(excerpt.length<250) throw new Error('The page did not expose enough readable documentation text.');
     const lesson=(row.lesson ? row.lesson+'\n\n' : '')+'Extracted documentation notes (source page; review before relying on them):\n'+excerpt;

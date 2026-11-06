@@ -96,7 +96,7 @@ async function executeStep(step, owner, runId) {
       const loc=r.headers.get('location'), next=loc?safeUrl(new URL(loc,u).toString()):null;
       if(!next) throw new Error('Redirect target was not accepted as a public HTTPS source.');
       u=next;
-      r=await fetch(u.toString(),{method:'GET',redirect:'manual',timeout_ms:12000,headers:{'Range':'bytes=0-65535','Accept':'text/html,text/plain,application/xhtml+xml','User-Agent':'ULTRON-Agent/1.0'}});
+      r=await fetch(u.toString(),{method:'GET',redirect:'manual',timeout_ms:12000,headers:{'Range':'bytes=0-262143','Accept':'text/html,text/plain,application/xhtml+xml','User-Agent':'ULTRON-Agent/1.0'}});
     }
     if(!r.ok) throw new Error('Source content retrieval failed: HTTP '+r.status+'.');
     const type=String(r.headers.get('content-type')||'').toLowerCase();
@@ -124,7 +124,7 @@ async function executeStep(step, owner, runId) {
     const pageLower=cleaned.toLowerCase();
     const mainStart=pageLower.indexOf('<main'), articleStart=pageLower.indexOf('<article');
     const contentStart=mainStart>=0?mainStart:articleStart;
-    if(contentStart>=0) cleaned=raw.slice(contentStart);
+    if(contentStart>=0) cleaned=cleaned.slice(contentStart);
     for(const name of ['style','script','noscript','nav','header','footer','aside']) {
       let lower=cleaned.toLowerCase(), start=lower.indexOf('<'+name);
       while(start>=0) { const open=lower.indexOf('>',start), end=open>=0?lower.indexOf('</'+name+'>',open):-1; if(open<0||end<0)break; cleaned=cleaned.slice(0,start)+cleaned.slice(end+name.length+3); lower=cleaned.toLowerCase(); start=lower.indexOf('<'+name); }
