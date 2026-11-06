@@ -77,6 +77,33 @@ async function executeStep(step, owner, runId) {
     if(!result.reachable) throw new Error('Source reachability check failed: HTTP '+(result.status||'unavailable')+'. '+(result.error||''));
     return result;
   }
+  if(step.step_type==='retrieve_source') {
+    let u=safeUrl(input.url);
+    if(!u) throw new Error('Only public HTTPS sources can be retrieved.');
+    const trustedHosts=['www.rfc-editor.org','datatracker.ietf.org','developer.mozilla.org','www.w3.org','www.nist.gov','www.who.int','www.un.org','www.worldbank.org','www.nature.com','www.science.org','www.reuters.com','apnews.com','www.bbc.com'];
+    if(!trustedHosts.includes(u.hostname.toLowerCase())) throw new Error('Source retrieval is currently limited to approved public reference hosts. The URL can still be checked for reachability, but its content was not fetched.');
+    let r=await fetch(u.toString(),{method:'GET',redirect:'manual',timeout_ms:12000,headers:{'Range':'bytes=0-65535','Accept':'text/html,text/plain,application/xhtml+xml','User-Agent':'ULTRON-Agent/1.0'}});
+    if(r.status>=300&&r.status<400) {
+      const loc=r.headers.get('location'), next=loc?safeUrl(new URL(loc,u).toString()):null;
+      if(!next) throw new Error('Redirect target was not accepted as a public HTTPS source.');
+      u=next;
+      r=await fetch(u.toString(),{method:'GET',redirect:'manual',timeout_ms:12000,headers:{'Range':'bytes=0-65535','Accept':'text/html,text/plain,application/xhtml+xml','User-Agent':'ULTRON-Agent/1.0'}});
+    }
+    if(!r.ok) throw new Error('Source content retrieval failed: HTTP '+r.status+'.');
+    const type=String(r.headers.get('content-type')||'').toLowerCase();
+    if(!(type.includes('text/html')||type.includes('text/plain')||type.includes('application/xhtml+xml'))) throw new Error('Unsupported source content type; only HTML and plain text are accepted.');
+    const declared=Number(r.headers.get('content-length')||0);
+    if(declared>1048576) throw new Error('Source is larger than the 1 MB retrieval limit.');
+    const raw=await r.text();
+    if(raw.length>120000) throw new Error('Source response exceeded the safe text limit.');
+    const lower=raw.toLowerCase(), a=lower.indexOf('<title'), b=a>=0?lower.indexOf('>',a):-1, c=b>=0?lower.indexOf('</title>',b):-1;
+    const title=a>=0&&b>=0&&c>b?raw.slice(b+1,c):'';
+    let plain='', inside=false, tag=false;
+    for(let i=0;i<raw.length&&plain.length<12000;i++){const ch=raw[i];if(ch==='<'){tag=true;inside=false;continue;}if(ch==='>'){tag=false;plain+=' ';continue;}if(!tag)plain+=ch;}
+    const excerpt=plain.replaceAll('&nbsp;',' ').replaceAll('&amp;','&').replaceAll('&quot;','"').replaceAll('&#39;',"'").replaceAll('&lt;','<').replaceAll('&gt;','>').replace(/\\s+/g,' ').trim().slice(0,5000);
+    if(!excerpt) throw new Error('No readable page text was extracted.');
+    return {retrieved:true,verified:false,verificationType:'source_content_capture',url:u.toString(),httpStatus:r.status,contentType:type,title:title.slice(0,240),excerpt,retrievedAt:new Date().toISOString(),evidenceLimit:'A captured page excerpt is source evidence, not proof that its claims are accurate or independent.'};
+  }
   if(step.step_type==='create_task') {
     const title=String(input.title||'').trim(), body=String(input.body||'').trim();
     const inserted=await db.query("INSERT INTO ultron_items(owner_id,kind,title,body,status) VALUES($1,'task',$2,$3,'open') RETURNING id,title,kind,status,created_at",[owner,title,body]);

@@ -142,17 +142,17 @@ export default async function (req, res) {
     },
     launchMission: {
       description: 'Create a durable ULTRON agent mission when the user asks you to research, learn, apply knowledge or complete a multi-step task. First reason about a practical plan, then create up to 8 supported steps. Allowed actions are free public research, checking a public HTTPS URL, saving a knowledge note, and creating a local ULTRON task. Never use this tool for sending messages, spending money, deleting data, changing accounts or other external consequential actions. Explain that research and URL reachability do not prove factual accuracy.',
-      inputSchema: { type: 'object', properties: { title: { type: 'string' }, objective: { type: 'string' }, steps: { type: 'array', minItems: 1, maxItems: 8, items: { type: 'object', properties: { type: { type: 'string', enum: ['research_search','verify_url','save_learning','create_task'] }, title: { type: 'string' }, input: { type: 'object' } }, required: ['type','title','input'] } } }, required: ['title','objective','steps'] },
+      inputSchema: { type: 'object', properties: { title: { type: 'string' }, objective: { type: 'string' }, steps: { type: 'array', minItems: 1, maxItems: 8, items: { type: 'object', properties: { type: { type: 'string', enum: ['research_search','verify_url','retrieve_source','save_learning','create_task'] }, title: { type: 'string' }, input: { type: 'object' } }, required: ['type','title','input'] } } }, required: ['title','objective','steps'] },
       execute: async ({ title, objective = '', steps = [] }) => {
         if (!title || title.length > 180 || String(objective).length > 2000 || !Array.isArray(steps) || !steps.length || steps.length > 8) return { error: 'Provide a title, objective under 2,000 characters and 1–8 supported steps.' };
-        const allowed = new Set(['research_search','verify_url','save_learning','create_task']);
+        const allowed = new Set(['research_search','verify_url','retrieve_source','save_learning','create_task']);
         const normalized = [];
         for (let i=0;i<steps.length;i++) {
           const s=steps[i]||{}, type=String(s.type||''), label=String(s.title||type).trim();
           const input=s.input&&typeof s.input==='object'&&!Array.isArray(s.input)?s.input:{};
           if (!allowed.has(type)||!label||label.length>180) return { error: 'Step '+(i+1)+' has an unsupported type or title.' };
           if (type==='research_search'&&(!String(input.query||'').trim()||String(input.query).length>300)) return { error: 'Research steps need a query under 300 characters.' };
-          if (type==='verify_url'&&(!safePublicUrl(String(input.url||''))||!String(input.url||'').startsWith('https://'))) return { error: 'Source checks require a public HTTPS URL.' };
+          if ((type==='verify_url'||type==='retrieve_source')&&(!safePublicUrl(String(input.url||''))||!String(input.url||'').startsWith('https://'))) return { error: 'Source checks require a public HTTPS URL.' };
           if (type==='save_learning'&&(!String(input.topic||'').trim()||!String(input.summary||'').trim()||String(input.summary).length>3000)) return { error: 'Learning steps need a topic and summary under 3,000 characters.' };
           if (type==='create_task'&&(!String(input.title||'').trim()||String(input.title).length>180||String(input.body||'').length>2000)) return { error: 'Task steps need a title under 180 characters.' };
           normalized.push({position:i+1,type,title:label,input});
