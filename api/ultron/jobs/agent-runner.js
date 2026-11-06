@@ -98,7 +98,17 @@ async function executeStep(step, owner, runId) {
     const truncated=responseText.length>120000;
     const raw=responseText.slice(0,120000);
     const lower=raw.toLowerCase(), a=lower.indexOf('<title'), b=a>=0?lower.indexOf('>',a):-1, c=b>=0?lower.indexOf('</title>',b):-1;
-    const title=a>=0&&b>=0&&c>b?raw.slice(b+1,c):'';
+    const title=a>=0&&b>=0&&c>b?raw.slice(b+1,c).replace(/<[^>]*>/g,' ').replace(/\\s+/g,' ').trim():'';
+    const attr=(tag,name)=>{const m=String(tag||'').match(new RegExp(name+'="([^"]*)"','i'));return m?m[1].trim():'';};
+    const metaTags=raw.match(/<meta\\b[^>]*>/gi)||[];
+    const metaValue=keys=>{for(const tag of metaTags){const key=(attr(tag,'name')||attr(tag,'property')||attr(tag,'itemprop')).toLowerCase();if(keys.includes(key)){const value=attr(tag,'content');if(value)return {value,field:key};}}return null;};
+    const canonicalTag=(raw.match(/<link\\b[^>]*rel="canonical"[^>]*>/i)||[])[0]||'';
+    const canonicalUrl=(()=>{const href=attr(canonicalTag,'href');if(!href)return null;try{const x=new URL(href,u);return x.protocol==='https:'?x.toString():null;}catch{return null;}})();
+    const published=metaValue(['article:published_time','datepublished','citation_publication_date','date']);
+    const modified=metaValue(['article:modified_time','datemodified','last-modified']);
+    const publisher=metaValue(['og:site_name','publisher','application-name']);
+    const description=metaValue(['og:description','description']);
+    const dateRecord=x=>{if(!x)return null;const parsed=Date.parse(x.value);return Number.isFinite(parsed)?{value:x.value,field:x.field,iso:new Date(parsed).toISOString()}:{value:x.value,field:x.field,iso:null};};
     let cleaned=raw;
     const pageLower=raw.toLowerCase();
     const mainStart=pageLower.indexOf('<main'), articleStart=pageLower.indexOf('<article');
@@ -112,7 +122,7 @@ async function executeStep(step, owner, runId) {
     for(let i=0;i<cleaned.length&&plain.length<20000;i++){const ch=cleaned[i];if(ch==='<'){tag=true;continue;}if(ch==='>'){tag=false;plain+=' ';continue;}if(!tag)plain+=ch;}
     const excerpt=plain.replaceAll('&nbsp;',' ').replaceAll('&amp;','&').replaceAll('&quot;','"').replaceAll('&#39;',"'").replaceAll('&lt;','<').replaceAll('&gt;','>').replace(/\\s+/g,' ').trim().slice(0,8000);
     if(!excerpt) throw new Error('No readable page text was extracted.');
-    return {retrieved:true,verified:false,verificationType:'source_content_capture',url:u.toString(),httpStatus:r.status,contentType:type,title:title.slice(0,240),excerpt,truncated,retrievedAt:new Date().toISOString(),evidenceLimit:'A captured page excerpt is source evidence, not proof that its claims are accurate or independent.'};
+    return {retrieved:true,verified:false,verificationType:'source_content_capture',url:u.toString(),canonicalUrl,title:title.slice(0,240),publisher:publisher?.value||null,description:description?.value||null,publicationDate:dateRecord(published),modifiedDate:dateRecord(modified),httpStatus:r.status,contentType:type,excerpt,truncated,retrievedAt:new Date().toISOString(),evidenceLimit:'Publication metadata is page-declared and may be absent or inaccurate; retrieval time is not publication time. A captured excerpt is source evidence, not proof that its claims are accurate or independent.'};
   }
   if(step.step_type==='assess_claim') {
     const claim=String(input.claim||'').trim().slice(0,600);
@@ -128,11 +138,11 @@ async function executeStep(step, owner, runId) {
       let best={sentence:'',overlap:0,matchedTerms:[]};
       for(const sentence of sentences){const words=new Set((sentence.toLowerCase().match(/[a-z0-9]{3,}/g)||[]).filter(x=>!stop.has(x)));const hit=terms.filter(x=>words.has(x));const ratio=terms.length?hit.length/terms.length:0;if(ratio>best.overlap)best={sentence:sentence.slice(0,700),overlap:Number(ratio.toFixed(3)),matchedTerms:hit};}
       let host='';try{host=new URL(source.url).hostname.toLowerCase().replace(/^www\\./,'')}catch{}
-      return {title:source.title||'',url:source.url,host,excerptCandidate:best.sentence,termOverlap:best.overlap,matchedTerms:best.matchedTerms,retrievedAt:source.retrievedAt||null};
+      return {title:source.title||'',url:source.url,canonicalUrl:source.canonicalUrl||null,publisher:source.publisher||null,publicationDate:source.publicationDate||null,modifiedDate:source.modifiedDate||null,httpStatus:source.httpStatus||null,contentType:source.contentType||null,truncated:source.truncated===true,host,excerptCandidate:best.sentence,termOverlap:best.overlap,matchedTerms:best.matchedTerms,retrievedAt:source.retrievedAt||null};
     });
     const domains=[...new Set(matches.map(x=>x.host).filter(Boolean))];
     const candidates=matches.filter(x=>x.termOverlap>=0.35&&x.matchedTerms.length>=3);
-    return {claim,assessmentStatus:candidates.length>=2&&domains.length>=2?'evidence_candidates_found':'insufficient_evidence',independentDomainCount:domains.length,sourceCount:matches.length,evidenceCandidates:candidates,allSources:matches,verified:false,verificationType:'conservative_claim_evidence_scan',method:'Deterministic term-overlap scan only. It does not infer entailment, contradiction, source independence, or truth.',nextAction:'A human or a separately authorized reasoning step must inspect the quoted passages and source provenance before accepting or rejecting the claim.'};
+    return {claim,assessmentStatus:candidates.length>=2&&domains.length>=2?'evidence_candidates_found':'insufficient_evidence',distinctHostnameCount:domains.length,sourceCount:matches.length,evidenceCandidates:candidates,allSources:matches,verified:false,verificationType:'conservative_claim_evidence_scan',method:'Deterministic term-overlap scan only. It does not infer entailment, contradiction, publisher independence, or truth. Distinct hostnames are not proof of independent publishers.',nextAction:'A human or a separately authorized reasoning step must inspect the quoted passages and source provenance before accepting or rejecting the claim.'};
   }
   if(step.step_type==='create_task') {
     const title=String(input.title||'').trim(), body=String(input.body||'').trim();
