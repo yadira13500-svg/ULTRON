@@ -122,7 +122,11 @@ async function executeStep(step, owner, runId) {
     for(let i=0;i<cleaned.length&&plain.length<20000;i++){const ch=cleaned[i];if(ch==='<'){tag=true;continue;}if(ch==='>'){tag=false;plain+=' ';continue;}if(!tag)plain+=ch;}
     const excerpt=plain.replaceAll('&nbsp;',' ').replaceAll('&amp;','&').replaceAll('&quot;','"').replaceAll('&#39;',"'").replaceAll('&lt;','<').replaceAll('&gt;','>').replace(/\\s+/g,' ').trim().slice(0,8000);
     if(!excerpt) throw new Error('No readable page text was extracted.');
-    return {retrieved:true,verified:false,verificationType:'source_content_capture',url:u.toString(),canonicalUrl,title:title.slice(0,240),publisher:publisher?.value||null,description:description?.value||null,publicationDate:dateRecord(published),modifiedDate:dateRecord(modified),httpStatus:r.status,contentType:type,excerpt,truncated,retrievedAt:new Date().toISOString(),evidenceLimit:'Publication metadata is page-declared and may be absent or inaccurate; retrieval time is not publication time. A captured excerpt is source evidence, not proof that its claims are accurate or independent.'};
+    const visiblePublished=excerpt.match(/(?:Published|Publication date)\\s*:\\s*([A-Z][a-z]+\\s+\\d{4}(?:-\\d{2}-\\d{2})?)/);
+    const visibleModified=excerpt.match(/(?:Last updated|Modified)\\s*:\\s*([A-Z][a-z]+\\s+\\d{4}(?:-\\d{2}-\\d{2})?)/);
+    const publicationDate=dateRecord(published)||(visiblePublished?dateRecord({value:visiblePublished[1],field:'visible_text_label:published'}):null);
+    const modifiedDate=dateRecord(modified)||(visibleModified?dateRecord({value:visibleModified[1],field:'visible_text_label:modified'}):null);
+    return {retrieved:true,verified:false,verificationType:'source_content_capture',url:u.toString(),canonicalUrl,title:title.slice(0,240),publisher:publisher?.value||null,description:description?.value||null,publicationDate,modifiedDate,httpStatus:r.status,contentType:type,excerpt,truncated,retrievedAt:new Date().toISOString(),evidenceLimit:'Publication metadata is page-declared and may be absent or inaccurate; retrieval time is not publication time. A captured excerpt is source evidence, not proof that its claims are accurate or independent.'};
   }
   if(step.step_type==='assess_claim') {
     const claim=String(input.claim||'').trim().slice(0,600);
