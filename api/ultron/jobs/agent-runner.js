@@ -122,9 +122,9 @@ async function executeStep(step, owner, runId) {
     const sourceUrl=String(input.source_url||'');
     let sourceName='Owner-provided';
     if(sourceUrl) {
-      const prior=(await db.query("SELECT result FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND step_type='verify_url' AND status='completed' ORDER BY position DESC",[runId,owner])).rows;
-      const match=prior.map(x=>x.result||{}).find(x=>x.url===sourceUrl&&x.reachable===true);
-      if(!match) throw new Error('This source has not passed a verify_url step in this run. Add verification before saving sourced learning.');
+      const prior=(await db.query("SELECT result FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND step_type='retrieve_source' AND status='completed' ORDER BY position DESC",[runId,owner])).rows;
+      const match=prior.map(x=>x.result||{}).find(x=>x.url===sourceUrl&&x.retrieved===true&&x.verificationType==='source_content_capture');
+      if(!match) throw new Error('This source has not had its content captured in this run. Add a retrieve_source step for the same URL before saving sourced learning.');
       sourceName=new URL(sourceUrl).hostname.slice(0,160);
     }
     const topic=String(input.topic).trim().slice(0,240), summary=String(input.summary).trim().slice(0,3000);
