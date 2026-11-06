@@ -4,7 +4,7 @@ export const access = 'admin';
 export const methods = ['GET'];
 
 export default async function (req, res) {
-  const country = String(req.query?.country || 'US').toUpperCase();
+  const country = String(req.query?.country || 'WORLD').toUpperCase();
   const category = String(req.query?.category || 'top').toLowerCase();
   if (!NEWS_COUNTRIES[country]) return res.status(400).json({ error: 'Unsupported country filter.' });
   const topics = {
