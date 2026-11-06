@@ -171,7 +171,16 @@ function renderAgentRuns(){
  box.innerHTML=agentRuns.length?agentRuns.map(r=>'<article class="evolution-item"><strong>'+esc(r.title)+'</strong><p>'+esc(r.objective||'No extra objective supplied.')+'</p><small>'+agentStatus(r.status,r.result)+' · '+new Date(r.created_at).toLocaleString()+(r.error?' · '+esc(r.error):'')+'</small><div class="agent-actions"><button class="secondary" data-agent-open="'+esc(r.id)+'">Inspect steps</button>'+(r.status==='queued'||r.status==='running'?'<button class="secondary" data-agent-action="cancel" data-id="'+esc(r.id)+'">Cancel</button>':'')+(r.status==='failed'||r.status==='cancelled'?'<button class="secondary" data-agent-action="retry" data-id="'+esc(r.id)+'">Retry</button>':'')+'</div></article>').join(''):'<div class="empty">No agent missions yet. Create one above to start ULTRON’s execution cycle.</div>';
 }
 async function loadAgentRuns(){
- try{agentRuns=(await req('/agent')).runs||[];renderAgentRuns()}catch(e){$('#agentStatus').textContent='Agent engine unavailable: '+e.message}
+ try{
+  agentRuns=(await req('/agent')).runs||[];renderAgentRuns();
+  const completed=agentRuns.filter(x=>x.status==='completed').length,failed=agentRuns.filter(x=>x.status==='failed').length;
+  const lessons=agentRuns.reduce((n,x)=>n+Number(x.result?.learning?.distinctApprovedLessonsConsulted||0),0);
+  $('#agentMetricRuns').textContent=agentRuns.length;
+  $('#agentMetricCompleted').textContent=completed;
+  $('#agentMetricFailed').textContent=failed;
+  $('#agentMetricLessons').textContent=lessons;
+  $('#agentStatus').textContent=agentRuns.filter(x=>['queued','running'].includes(x.status)).length+' active · '+agentRuns.length+' recent mission(s) · '+(completed+failed?Math.round(completed/(completed+failed)*100)+'% completion rate':'no completed outcomes yet')+' · free-first execution';
+ }catch(e){$('#agentStatus').textContent='Agent engine unavailable: '+e.message}
 }
 async function inspectAgentRun(id){
  const d=await req('/agent?id='+encodeURIComponent(id)),r=d.run,steps=d.steps||[];
