@@ -186,10 +186,11 @@ body[data-persona="companion"] #ultronTalk.face.listening{filter:drop-shadow(0 0
 #ultronTalk.listening .ueye-f{fill:#fff}
 @media (prefers-reduced-motion:reduce){.ulip-low,.ugap{animation:none!important}}
 
-/* ULTRON android bust: the single face for every mode */
-#ultronTalk.face .uface:not(.uface-android){display:none!important}
-#ultronTalk.face .uface.uface-android{display:block}
-#ultronTalk.reactor-core.face{width:236px;height:244px}
+/* ULTRON face: human-like face with red eyes and chrome armor, same for every mode */
+#ultronTalk.face .uface:not(.uface-model){display:none!important}
+#ultronTalk.face .uface.uface-model{display:block}
+#ultronTalk.listening .umiris{fill:#fff}
+#ultronTalk.reactor-core.face{width:190px;height:238px}
 #ultronTalk.face{filter:drop-shadow(0 0 16px rgba(255,59,48,.38))}
 #ultronTalk.face:hover{filter:drop-shadow(0 0 24px rgba(255,80,66,.55))}
 #ultronTalk.face.speaking{filter:drop-shadow(0 0 28px rgba(255,70,56,.75))}
@@ -203,10 +204,10 @@ body[data-persona="companion"] #ultronTalk.face.listening{filter:drop-shadow(0 0
 .ring-b{border-color:rgba(255,60,50,.55);border-left-color:transparent;border-right-color:transparent}
 .reactor-grid{background:radial-gradient(circle,rgba(255,60,48,.14),rgba(120,20,20,.05) 50%,transparent 70%)}
 .reactor-scan{background:conic-gradient(from 0deg,transparent 0 72%,rgba(255,80,66,.14) 82%,transparent 90%)}
-@media (max-width:760px){#ultronTalk.reactor-core.face{width:190px;height:196px}}
-@media (max-width:380px){#ultronTalk.reactor-core.face{width:160px;height:166px}}
-@media (min-width:2500px){#ultronTalk.reactor-core.face{width:290px;height:300px}}
-@media (max-height:500px) and (orientation:landscape){#ultronTalk.reactor-core.face{width:130px;height:135px}}
+@media (max-width:760px){#ultronTalk.reactor-core.face{width:150px;height:188px}}
+@media (max-width:380px){#ultronTalk.reactor-core.face{width:126px;height:158px}}
+@media (min-width:2500px){#ultronTalk.reactor-core.face{width:240px;height:300px}}
+@media (max-height:500px) and (orientation:landscape){#ultronTalk.reactor-core.face{width:112px;height:140px}}
 @media (prefers-reduced-motion:reduce){.agtrim,.agcore{animation:none!important}}
 .ulip-low{transform-box:fill-box;transform-origin:center top}
 
