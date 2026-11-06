@@ -200,11 +200,16 @@ export default async function(req,res) {
   }
   if(!run) return res.json({ok:true,processed:false,note:'No eligible agent run was found.'});
   await db.query("UPDATE ultron_agent_steps SET status='pending' WHERE run_id=$1 AND owner_id=$2 AND status='running' AND started_at<now()-interval '4 minutes'",[run.id,run.owner_id]);
-  const steps=(await db.query("SELECT id,position,step_type,title,input FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND status='pending' ORDER BY position LIMIT 3",[run.id,run.owner_id])).rows;
+  const steps=(await db.query("SELECT id,position,step_type,title,input,depends_on FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND status='pending' ORDER BY position LIMIT 3",[run.id,run.owner_id])).rows;
   let completed=0, failed=0;
   for(const step of steps) {
     const state=(await db.query("SELECT status FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
     if(!state||state.status==='cancelled') break;
+    const dependencies=Array.isArray(step.depends_on)?step.depends_on:[];
+    if(dependencies.length) {
+      const prerequisiteRows=(await db.query("SELECT position,status FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND position=ANY($3::int[])",[run.id,run.owner_id,dependencies])).rows;
+      if(prerequisiteRows.length!==dependencies.length||prerequisiteRows.some(x=>x.status!=='completed')) continue;
+    }
     const claim=await db.query("UPDATE ultron_agent_steps SET status='running',attempts=attempts+1,started_at=now(),error='' WHERE id=$1 AND owner_id=$2 AND status='pending' RETURNING id,attempts",[step.id,run.owner_id]);
     if(!claim.rows.length) continue;
     try {

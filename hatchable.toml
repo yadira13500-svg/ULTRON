@@ -1,5 +1,12 @@
 name = "ULTRON"
 
+[[config]]
+name = "ultron_allow_paid_ai_fallback"
+type = "string"
+label = "Allow paid AI fallback"
+help = "Set to true only when you explicitly approve paid or billing-unknown AI fallback. Leave blank or false to keep fallback disabled."
+maxlength = 5
+
 [[secret]]
 name = "NVIDIA_API_KEY"
 required = false

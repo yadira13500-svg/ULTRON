@@ -150,11 +150,11 @@ export default async function (req, res) {
       }
     },
     launchMission: {
-      description: 'Create a durable ULTRON agent mission when the user asks you to research, learn, apply knowledge or complete a multi-step task. First reason about a practical plan, then create up to 8 supported steps. Allowed actions are free public research, checking URL reachability, capturing bounded page excerpts from approved public reference hosts, saving a knowledge note, and creating a local ULTRON task. Never use this tool for sending messages, spending money, deleting data, changing accounts or other external consequential actions. Explain that research and URL reachability do not prove factual accuracy.',
-      inputSchema: { type: 'object', properties: { title: { type: 'string' }, objective: { type: 'string' }, steps: { type: 'array', minItems: 1, maxItems: 8, items: { type: 'object', properties: { type: { type: 'string', enum: ['research_search','verify_url','retrieve_source','assess_claim','save_learning','create_task'] }, title: { type: 'string' }, input: { type: 'object' } }, required: ['type','title','input'] } } }, required: ['title','objective','steps'] },
+      description: 'Create a durable ULTRON agent mission when the user asks you to research, learn, apply knowledge or complete a multi-step task. First reason about the goal, break it into up to 16 ordered steps, identify prerequisites with depends_on step positions, and include explicit verification steps. Supported actions are free public research, checking URL reachability, capturing bounded excerpts from public HTTPS sources, assessing captured claims, saving sourced knowledge, creating local tasks, and applying owner-mastered skills. Never use this tool for sending messages, spending money, deleting data, changing accounts or other external consequential actions. Explain that retrieval and operational checks do not prove factual accuracy.',
+      inputSchema: { type: 'object', properties: { title: { type: 'string' }, objective: { type: 'string' }, steps: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'object', properties: { type: { type: 'string', enum: ['research_search','verify_url','retrieve_source','assess_claim','save_learning','create_task','skill_apply'] }, title: { type: 'string' }, input: { type: 'object' }, depends_on: { type: 'array', items: { type: 'integer' }, maxItems: 8 } }, required: ['type','title','input'] } } }, required: ['title','objective','steps'] },
       execute: async ({ title, objective = '', steps = [] }) => {
-        if (!title || title.length > 180 || String(objective).length > 2000 || !Array.isArray(steps) || !steps.length || steps.length > 8) return { error: 'Provide a title, objective under 2,000 characters and 1–8 supported steps.' };
-        const allowed = new Set(['research_search','verify_url','retrieve_source','assess_claim','save_learning','create_task']);
+        if (!title || title.length > 180 || String(objective).length > 2000 || !Array.isArray(steps) || !steps.length || steps.length > 16) return { error: 'Provide a title, objective under 2,000 characters and 1–16 supported steps.' };
+        const allowed = new Set(['research_search','verify_url','retrieve_source','assess_claim','save_learning','create_task','skill_apply']);
         const normalized = [];
         for (let i=0;i<steps.length;i++) {
           const s=steps[i]||{}, type=String(s.type||''), label=String(s.title||type).trim();
@@ -165,11 +165,14 @@ export default async function (req, res) {
           if ((type==='verify_url'||type==='retrieve_source')&&(!safePublicUrl(String(input.url||''))||!String(input.url||'').startsWith('https://'))) return { error: 'Source checks require a public HTTPS URL.' };
           if (type==='save_learning'&&(!String(input.topic||'').trim()||!String(input.summary||'').trim()||String(input.summary).length>3000)) return { error: 'Learning steps need a topic and summary under 3,000 characters.' };
           if (type==='create_task'&&(!String(input.title||'').trim()||String(input.title).length>180||String(input.body||'').length>2000)) return { error: 'Task steps need a title under 180 characters.' };
-          normalized.push({position:i+1,type,title:label,input});
+          if (type==='skill_apply') { if(!String(input.skill_id||'').trim()||!String(input.task_description||'').trim()||!String(input.metric_label||'').trim()||!Number.isFinite(Number(input.baseline_value))||!['higher_is_better','lower_is_better'].includes(input.metric_direction)) return { error:'Skill application needs a mastered skill, practical task, outcome metric, numeric baseline and direction.' }; const skill=(await db.query("SELECT id FROM ultron_skill_modules WHERE id=$1 AND owner_id=$2 AND status='mastered'",[input.skill_id,owner])).rows[0]; if(!skill)return { error:'Only an owner-reviewed mastered skill can be attached to a mission.' }; }
+          const dependsOn=Array.isArray(s.depends_on)?s.depends_on:[];
+          if(dependsOn.length>8||new Set(dependsOn).size!==dependsOn.length||dependsOn.some(n=>!Number.isInteger(n)||n<1||n>=i+1)) return { error:'Dependencies must reference unique earlier step positions only.' };
+          normalized.push({position:i+1,type,title:label,input,depends_on:dependsOn});
         }
         for (let i=0;i<normalized.length;i++) { const s=normalized[i]; if(s.type==='save_learning'&&s.input.source_url&&!normalized.some((v,j)=>j<i&&v.type==='retrieve_source'&&v.input.url===s.input.source_url)) return { error: 'Add a retrieve_source step for the same source before saving sourced learning.' }; if(s.type==='assess_claim'&&(!Array.isArray(s.input.source_urls)||!s.input.source_urls.every(url=>normalized.some((v,j)=>j<i&&v.type==='retrieve_source'&&v.input.url===url)))) return { error: 'Capture each exact source URL before assessing a claim.' }; }
         const run=(await db.query("INSERT INTO ultron_agent_runs(owner_id,title,objective,plan) VALUES($1,$2,$3,$4::jsonb) RETURNING id,title,status,created_at",[owner,String(title).trim(),String(objective),JSON.stringify(normalized)])).rows[0];
-        for (const s of normalized) await db.query('INSERT INTO ultron_agent_steps(run_id,owner_id,position,step_type,title,input) VALUES($1,$2,$3,$4,$5,$6::jsonb)',[run.id,owner,s.position,s.type,s.title,JSON.stringify(s.input)]);
+        for (const s of normalized) await db.query('INSERT INTO ultron_agent_steps(run_id,owner_id,position,step_type,title,input,depends_on) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)',[run.id,owner,s.position,s.type,s.title,JSON.stringify(s.input),JSON.stringify(s.depends_on)]);
         try {
           await scheduler.now('/api/ultron/jobs/agent-runner',{runId:run.id});
           return { created:true,runId:run.id,status:'queued',workerQueued:true,message:'Mission plan saved and background execution queued. Report progress and verification honestly.' };
@@ -376,7 +379,8 @@ export default async function (req, res) {
   try {
     let result, lastErr, nvErr, usedProv;
     const deepFlag = body.deep === true || (body.voice !== true && ['engineer','legal','wellness','strategist','adaptive'].includes(mode));
-    const order = [['groq', 'GROQ_API_KEY'], ['gemini', 'GEMINI_API_KEY'], ['nvidia', 'NVIDIA_API_KEY'], ['tokenharbor', 'TOKENHARBOR_API_KEY'], ['openai', 'OPENAI_API_KEY']];
+    const allowPaidFallback = String(await config.get('ultron_allow_paid_ai_fallback') || '').toLowerCase() === 'true';
+    const order = [['nvidia', 'NVIDIA_API_KEY'], ['groq', 'GROQ_API_KEY'], ...(allowPaidFallback ? [['gemini', 'GEMINI_API_KEY'], ['tokenharbor', 'TOKENHARBOR_API_KEY'], ['openai', 'OPENAI_API_KEY']] : [])];
     const errs = [];
     for (const [prov, keyName] of order) {
       const k = await config.get(keyName);
@@ -385,8 +389,8 @@ export default async function (req, res) {
       catch (err) { errs.push(prov + ': ' + String(err && err.message || err).slice(0, 140)); }
     }
     if (!result && errs.length) { nvErr = new Error('All AI providers failed. ' + errs.join(' | ')); throw nvErr; }
-    if (!result) lastErr = new Error('No AI key is set. Add a free GROQ_API_KEY or GEMINI_API_KEY on the project Setup page.');
-    if (!result) {
+    if (!result) lastErr = new Error('No approved provider key is configured. Connect NVIDIA or another approved free provider; paid fallback is disabled.');
+    if (!result && allowPaidFallback) {
     for (const model of ['gpt-mini', 'haiku', 'gemini-flash']) {
       try {
         result = await ai.generateText({ model, purpose: 'ultron-chat', userId: owner, messages, tools, maxSteps: 7, maxTokens: body.voice === true ? 600 : 2400 });

@@ -24,7 +24,7 @@ export default async function(req,res) {
       // Sourced-learning order is validated in the POST planner below.
     const run = (await db.query('SELECT id,title,objective,status,plan,result,error,attempts,created_at,updated_at,started_at,completed_at FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2',[id,owner])).rows[0];
       if (!run) return res.status(404).json({error:'Agent run not found.'});
-      const steps = (await db.query('SELECT id,position,step_type,title,input,status,result,error,attempts,started_at,completed_at FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 ORDER BY position',[id,owner])).rows;
+      const steps = (await db.query('SELECT id,position,step_type,title,input,depends_on,status,result,error,attempts,started_at,completed_at FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 ORDER BY position',[id,owner])).rows;
       return res.json({run,steps});
     }
     const runs = (await db.query('SELECT id,title,objective,status,result,error,attempts,created_at,updated_at,completed_at FROM ultron_agent_runs WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 40',[owner])).rows;
@@ -36,8 +36,8 @@ export default async function(req,res) {
     const title = String(body.title || '').trim();
     const objective = String(body.objective || '').trim();
     const steps = Array.isArray(body.steps) ? body.steps : [];
-    if (!title || title.length > 180 || objective.length > 2000 || !steps.length || steps.length > 8)
-      return res.status(400).json({error:'Provide a title, an objective under 2,000 characters, and 1–8 steps.'});
+    if (!title || title.length > 180 || objective.length > 2000 || !steps.length || steps.length > 16)
+      return res.status(400).json({error:'Provide a title, an objective under 2,000 characters, and 1–16 steps.'});
     const normalized = [];
     for (let i=0;i<steps.length;i++) {
       const s=steps[i] || {};
@@ -53,13 +53,15 @@ export default async function(req,res) {
       if (type==='create_task' && (!String(input.title||'').trim() || String(input.title).length>180 || String(input.body||'').length>2000)) return res.status(400).json({error:'Task steps need a title under 180 characters and optional details under 2,000 characters.'});
       if (type==='skill_apply' && (!String(input.skill_id||'').trim() || !String(input.task_description||'').trim() || !String(input.metric_label||'').trim() || !Number.isFinite(Number(input.baseline_value)) || !['higher_is_better','lower_is_better'].includes(input.metric_direction))) return res.status(400).json({error:'Skill application requires a skill ID, practical task, metric label, numeric baseline and metric direction.'});
       if (type==='skill_apply') { const skill=(await db.query("SELECT id,title FROM ultron_skill_modules WHERE id=$1 AND owner_id=$2 AND status='mastered'",[input.skill_id,owner])).rows[0]; if(!skill)return res.status(409).json({error:'Only an owner-reviewed mastered skill can be attached to an agent mission.'}); }
-      normalized.push({position:i+1,type,title:label,input});
+      const dependsOn=Array.isArray(s.depends_on)?s.depends_on:[];
+      if(dependsOn.length>8||new Set(dependsOn).size!==dependsOn.length||dependsOn.some(n=>!Number.isInteger(n)||n<1||n>=i+1)) return res.status(400).json({error:'Step dependencies must reference unique earlier step positions only.'});
+      normalized.push({position:i+1,type,title:label,input,depends_on:dependsOn});
     }
     for (let i=0;i<normalized.length;i++) { const s=normalized[i]; if(s.type==='save_learning'&&s.input.source_url&&!normalized.some((v,j)=>j<i&&v.type==='retrieve_source'&&v.input.url===s.input.source_url)) return res.status(400).json({error:'Add a retrieve_source step for the same source before saving sourced learning.'}); }
     for (let i=0;i<normalized.length;i++) { const s=normalized[i]; if(s.type==='assess_claim' && (!Array.isArray(s.input.source_urls) || !s.input.source_urls.every(url=>normalized.some((v,j)=>j<i&&v.type==='retrieve_source'&&v.input.url===url)))) return res.status(400).json({error:'Capture each exact source URL before assessing a claim.'}); }
     const run = (await db.query("INSERT INTO ultron_agent_runs(owner_id,title,objective,plan) VALUES($1,$2,$3,$4::jsonb) RETURNING id,title,objective,status,created_at",[owner,title,objective,JSON.stringify(normalized)])).rows[0];
     for (const s of normalized) {
-      await db.query('INSERT INTO ultron_agent_steps(run_id,owner_id,position,step_type,title,input) VALUES($1,$2,$3,$4,$5,$6::jsonb)',[run.id,owner,s.position,s.type,s.title,JSON.stringify(s.input)]);
+      await db.query('INSERT INTO ultron_agent_steps(run_id,owner_id,position,step_type,title,input,depends_on) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)',[run.id,owner,s.position,s.type,s.title,JSON.stringify(s.input),JSON.stringify(s.depends_on)]);
     }
     try {
       await scheduler.now('/api/ultron/jobs/agent-runner',{runId:run.id});
