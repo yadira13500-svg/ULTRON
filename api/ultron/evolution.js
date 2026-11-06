@@ -89,10 +89,13 @@ export default async function(req,res){
   }
   if(type==='skill_assessment'){
    const skillId=String(b.skill_id||'');
-   const skill=(await db.query('SELECT id,title,status,test_json FROM ultron_skill_modules WHERE id=$1 AND owner_id=$2',[skillId,owner])).rows[0];
+   const skill=(await db.query('SELECT id,title,status,test_json,concepts_json FROM ultron_skill_modules WHERE id=$1 AND owner_id=$2',[skillId,owner])).rows[0];
    if(!skill)return res.status(404).json({error:'Skill module not found.'});
    if(skill.status!=='ready'&&skill.status!=='mastered')return res.status(409).json({error:'The source lesson must be ingested and ready before assessment.'});
+   const concepts=Array.isArray(skill.concepts_json)?skill.concepts_json:[];
+   if(!concepts.length)return res.status(409).json({error:'This source has not produced structured concepts yet. Re-run source ingestion or review the source.'});
    const questions=Array.isArray(skill.test_json)?skill.test_json:[];
+   if(questions.some(q=>!q?.concept_id||!concepts.some(c=>c.id===q.concept_id)))return res.status(409).json({error:'Assessment questions must be linked to a structured concept before testing.'});
    const answers=Array.isArray(b.answers)?b.answers:[];
    if(!questions.length||answers.length!==questions.length||answers.some((x,i)=>!String(x?.answer||'').trim()))return res.status(400).json({error:'Answer every saved assessment question before submitting.'});
    const snapshot=questions.map((q,i)=>({question:String(q.question||q).slice(0,1000),concept_id:String(q.concept_id||''),answer:String(answers[i].answer).slice(0,4000)}));

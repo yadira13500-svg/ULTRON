@@ -38,8 +38,8 @@ async function ingestSkill(row) {
     const excerpt=clean(raw);
     if(excerpt.length<250) throw new Error('The page did not expose enough readable documentation text.');
     const lesson=(row.lesson ? row.lesson+'\n\n' : '')+'Extracted documentation notes (source page; review before relying on them):\n'+excerpt;
-    const sentences=excerpt.split(/(?<=[.!?])\\s+/).map(x=>x.trim()).filter(x=>x.length>=45&&x.length<=700).slice(0,10);
-    const concepts=sentences.map((sentence,i)=>({id:'concept_'+(i+1),title:sentence.split(/\\s+/).slice(0,8).join(' ').replace(/[,:;.]$/,''),summary:sentence,source_url:u.toString(),evidence_type:'source_excerpt',review_status:'proposed'}));
+    const sentences=excerpt.split(/\n|(?<=[.!?])\s+/).map(x=>x.trim()).filter(x=>x.length>=45&&x.length<=700).slice(0,10);
+    const concepts=sentences.map((sentence,i)=>({id:'concept_'+(i+1),title:sentence.split(/\s+/).slice(0,8).join(' ').replace(/[,:;.]$/,''),summary:sentence,source_url:u.toString(),evidence_type:'source_excerpt',review_status:'proposed'}));
     const objectives=concepts.map(c=>({concept_id:c.id,objective:'Explain '+c.title.toLowerCase()+' in your own words, identify when it applies, and demonstrate it in a practical example.',assessment_signal:'A correct explanation plus a separate practical demonstration',status:'proposed'}));
     const tests=(Array.isArray(row.test_json)?row.test_json:[]).map((q,i)=>({...q,concept_id:concepts.length?concepts[i%concepts.length].id:''}));
     await db.query("UPDATE ultron_skill_modules SET content_excerpt=$3,lesson=$4,concepts_json=$5::jsonb,objectives_json=$6::jsonb,test_json=$7::jsonb,ingested_at=now(),status='ready',last_error='' WHERE id=$1 AND owner_id=$2",[row.id,row.owner_id,excerpt,lesson.slice(0,19000),JSON.stringify(concepts),JSON.stringify(objectives),JSON.stringify(tests)]);
