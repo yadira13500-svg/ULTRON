@@ -17,6 +17,20 @@ export default async function(req,res){
  }
  if(req.method==='POST'){
   const type=String(b.type||'');
+  if(type==='knowledge_sync'){
+   const {rows}=await db.query("SELECT id,topic,summary,source_url,source_name,published_at,source_status FROM ultron_knowledge WHERE owner_id=$1 AND source_url LIKE 'https://%' ORDER BY created_at DESC LIMIT 100",[owner]);
+   let linked=0;
+   for(const item of rows){
+    const topicLabel=String(item.topic||'').slice(0,180);if(!topicLabel)continue;
+    const topic=await db.query("INSERT INTO ultron_graph_nodes(owner_id,label,node_type,description) VALUES($1,$2,'topic',$3) ON CONFLICT(owner_id,label,node_type) DO UPDATE SET description=CASE WHEN EXCLUDED.description<>'' THEN EXCLUDED.description ELSE ultron_graph_nodes.description END RETURNING id",[owner,topicLabel,String(item.summary||'').slice(0,1000)]);
+    const sourceLabel=('Source: '+String(item.source_name||'Research source')+' · '+topicLabel+' · '+String(item.id).slice(0,8)).slice(0,180);
+    const source=await db.query("INSERT INTO ultron_graph_nodes(owner_id,label,node_type,description) VALUES($1,$2,'source',$3) ON CONFLICT(owner_id,label,node_type) DO UPDATE SET description=EXCLUDED.description RETURNING id",[owner,sourceLabel,String(item.source_url).slice(0,1000)]);
+    const evidence=[String(item.summary||'Saved research source.'),item.published_at?'Publication date: '+item.published_at:'Publication date unavailable',item.source_status?'Source status: '+item.source_status:'Source status not checked'].join(' · ').slice(0,1000);
+    await db.query("INSERT INTO ultron_graph_edges(owner_id,from_id,to_id,relation,evidence,source_url,confidence) VALUES($1,$2,$3,'documented by',$4,$5,0.5) ON CONFLICT(owner_id,from_id,to_id,relation) DO UPDATE SET evidence=EXCLUDED.evidence,source_url=EXCLUDED.source_url",[owner,topic.rows[0].id,source.rows[0].id,evidence,String(item.source_url).slice(0,1000)]);
+    linked++;
+   }
+   return res.json({ok:true,linked,scanned:rows.length,note:'Saved research sources are linked as evidence records; this does not independently verify their claims.'});
+  }
   if(type==='preference'){
    if(!b.category||!b.preference)return res.status(400).json({error:'Category and preference required.'});
    const {rows}=await db.query('INSERT INTO ultron_preferences(owner_id,category,preference,confidence,source,confirmed) VALUES($1,$2,$3,$4,$5,true) RETURNING *',[owner,String(b.category).slice(0,60),String(b.preference).slice(0,1000),1,'user']);
