@@ -28,6 +28,23 @@ async function quickResearch(query) {
   const q=String(query||'').trim().slice(0,240);
   const results=[];
   try {
+    const response=await fetch('https://html.duckduckgo.com/html/?q='+encodeURIComponent(q),{timeout_ms:9000,headers:{'Accept':'text/html','User-Agent':'Mozilla/5.0 ULTRON-Agent/1.0'}});
+    if(response.ok) {
+      const html=await response.text();
+      const chunks=html.split('class="result__a"').slice(1);
+      for(const chunk of chunks) {
+        const href=(chunk.split('href="')[1]||'').split('"')[0];
+        const title=(chunk.split('>')[1]||'').split('</a>')[0].replace(/<[^>]*>/g,' ').replace(/&amp;/g,'&').replace(/&quot;/g,'"').trim();
+        try {
+          const link=new URL(href,'https://duckduckgo.com'), target=link.searchParams.get('uddg')||link.href, u=new URL(target);
+          if(title&&(u.protocol==='https:'||u.protocol==='http:')&&!/(duckduckgo|google)\./i.test(u.hostname))results.push({title,url:u.href,snippet:''});
+        } catch {}
+        if(results.length>=5)break;
+      }
+    }
+  } catch {}
+  if(results.length)return {results,source:'DuckDuckGo public web results',retrievedAt:new Date().toISOString()};
+  try {
     const url='https://api.duckduckgo.com/?q='+encodeURIComponent(q)+'&format=json&no_html=1&skip_disambig=1';
     const r=await fetch(url,{timeout_ms:7000,headers:{'Accept':'application/json','User-Agent':'ULTRON-Agent/1.0'}});
     if(r.ok) {
