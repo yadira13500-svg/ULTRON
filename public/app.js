@@ -177,11 +177,13 @@ async function inspectAgentRun(id){
 $('#agentForm').addEventListener('submit',async e=>{
  e.preventDefault();const b=e.submitter;b.disabled=true;b.textContent='Queuing mission…';
  try{
-  const title=$('#agentTitle').value.trim(),objective=$('#agentObjective').value.trim(),query=$('#agentQuery').value.trim(),verifyUrl=$('#agentVerifyUrl').value.trim(),topic=$('#agentLearnTopic').value.trim(),summary=$('#agentLearnSummary').value.trim();
+  const title=$('#agentTitle').value.trim(),objective=$('#agentObjective').value.trim(),query=$('#agentQuery').value.trim(),verifyUrl=$('#agentVerifyUrl').value.trim(),topic=$('#agentLearnTopic').value.trim(),summary=$('#agentLearnSummary').value.trim(),taskTitle=$('#agentTaskTitle').value.trim();
   if(Boolean(topic)!==Boolean(summary))throw new Error('Enter both a learning topic and its summary, or leave both blank.');
   const steps=[{type:'research_search',title:'Research the objective',input:{query}}];
   if(verifyUrl)steps.push({type:'verify_url',title:'Verify the supplied source',input:{url:verifyUrl}});
   if(topic&&summary)steps.push({type:'save_learning',title:'Save verified learning',input:{topic,summary,source_url:verifyUrl}});
+  if(taskTitle)steps.push({type:'create_task',title:'Apply the mission as a follow-up task',input:{title:taskTitle,body:objective}});
+  if(steps.length>8)throw new Error('This mission has too many steps.');
   const r=await req('/agent','POST',{title,objective,steps});
   e.target.reset();await loadAgentRuns();await inspectAgentRun(r.runId);toast(r.workerQueued?'Mission saved and background execution queued.':'Mission saved; recovery worker will pick it up.');
  }catch(err){toast(err.message)}finally{b.disabled=false;b.textContent='Launch mission ↗'}

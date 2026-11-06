@@ -34,7 +34,7 @@ async function quickResearch(query) {
       const chunks=html.split('class="result__a"').slice(1);
       for(const chunk of chunks) {
         const href=(chunk.split('href="')[1]||'').split('"')[0];
-        const title=(chunk.split('>')[1]||'').split('</a>')[0].replace(/<[^>]*>/g,' ').replace(/&amp;/g,'&').replace(/&quot;/g,'"').trim();
+        const title=(chunk.split('>')[1]||'').split('</a')[0].replace(/<[^>]*>/g,' ').replace(/&amp;/g,'&').replace(/&quot;/g,'"').trim();
         try {
           const link=new URL(href,'https://duckduckgo.com'), target=link.searchParams.get('uddg')||link.href, u=new URL(target);
           if(title&&(u.protocol==='https:'||u.protocol==='http:')&&!/(duckduckgo|google)\./i.test(u.hostname))results.push({title,url:u.href,snippet:''});
@@ -76,6 +76,14 @@ async function executeStep(step, owner, runId) {
     const result=await verifyUrl(input.url);
     if(!result.verified) throw new Error('Source verification failed: HTTP '+(result.status||'unavailable')+'. '+(result.error||''));
     return result;
+  }
+  if(step.step_type==='create_task') {
+    const title=String(input.title||'').trim(), body=String(input.body||'').trim();
+    const inserted=await db.query("INSERT INTO ultron_items(owner_id,kind,title,body,status) VALUES($1,'task',$2,$3,'open') RETURNING id,title,kind,status,created_at",[owner,title,body]);
+    const saved=inserted.rows[0];
+    const check=(await db.query('SELECT id,title,kind,status FROM ultron_items WHERE id=$1 AND owner_id=$2',[saved.id,owner])).rows[0];
+    if(!check||check.id!==saved.id||check.status!=='open') throw new Error('The task was inserted but its persisted state could not be verified.');
+    return {created:true,verified:true,item:check};
   }
   if(step.step_type==='save_learning') {
     const sourceUrl=String(input.source_url||'');

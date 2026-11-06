@@ -3,7 +3,7 @@ import { db, scheduler } from 'hatchable';
 export const access = 'admin';
 export const methods = ['GET','POST','PUT'];
 
-const STEP_TYPES = new Set(['research_search','verify_url','save_learning']);
+const STEP_TYPES = new Set(['research_search','verify_url','save_learning','create_task']);
 const safeUrl = value => {
   try {
     const u = new URL(String(value || ''));
@@ -47,6 +47,7 @@ export default async function(req,res) {
       if (type==='research_search' && (!String(input.query||'').trim() || String(input.query).length>300)) return res.status(400).json({error:'Research steps need a query under 300 characters.'});
       if (type==='verify_url' && !safeUrl(input.url)) return res.status(400).json({error:'Verification steps require a public HTTPS URL.'});
       if (type==='save_learning' && (!String(input.topic||'').trim() || !String(input.summary||'').trim() || String(input.summary).length>3000)) return res.status(400).json({error:'Learning steps need a topic and a summary under 3,000 characters.'});
+      if (type==='create_task' && (!String(input.title||'').trim() || String(input.title).length>180 || String(input.body||'').length>2000)) return res.status(400).json({error:'Task steps need a title under 180 characters and optional details under 2,000 characters.'});
       normalized.push({position:i+1,type,title:label,input});
     }
     const run = (await db.query("INSERT INTO ultron_agent_runs(owner_id,title,objective,plan) VALUES($1,$2,$3,$4::jsonb) RETURNING id,title,objective,status,created_at",[owner,title,objective,JSON.stringify(normalized)])).rows[0];
