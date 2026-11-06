@@ -1,5 +1,4 @@
 import { db, scheduler } from 'hatchable';
-import { searchPublicWeb } from 'lib/search.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -25,13 +24,36 @@ async function verifyUrl(value) {
   }
   return {verified:r.status>=200&&r.status<300,url:u.toString(),status:r.status,checkedAt:new Date().toISOString(),contentType:r.headers.get('content-type')||''};
 }
+async function quickResearch(query) {
+  const q=String(query||'').trim().slice(0,240);
+  const results=[];
+  try {
+    const url='https://api.duckduckgo.com/?q='+encodeURIComponent(q)+'&format=json&no_html=1&skip_disambig=1';
+    const r=await fetch(url,{timeout_ms:7000,headers:{'Accept':'application/json','User-Agent':'ULTRON-Agent/1.0'}});
+    if(r.ok) {
+      const d=await r.json();
+      if(d.AbstractURL&&d.AbstractText)results.push({title:d.Heading||q,url:d.AbstractURL,snippet:d.AbstractText});
+      for(const x of (d.RelatedTopics||[]).flatMap(v=>v.Topics||[v]))if(x.FirstURL&&x.Text)results.push({title:String(x.Text).split(' - ')[0].slice(0,180),url:x.FirstURL,snippet:String(x.Text).slice(0,900)});
+    }
+  } catch {}
+  if(!results.length) {
+    try {
+      const url='https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch='+encodeURIComponent(q)+'&format=json&utf8=1&srlimit=5';
+      const r=await fetch(url,{timeout_ms:7000,headers:{'Accept':'application/json','User-Agent':'ULTRON-Agent/1.0'}});
+      if(r.ok) {
+        const d=await r.json();
+        for(const x of (d.query?.search||[]))results.push({title:x.title,url:'https://en.wikipedia.org/?curid='+x.pageid,snippet:String(x.snippet||'').replace(/<[^>]*>/g,'')});
+      }
+    } catch {}
+  }
+  return {results:results.slice(0,5),source:results.length?'DuckDuckGo Instant Answers / Wikipedia':'Free public indexes',retrievedAt:new Date().toISOString()};
+}
 async function executeStep(step, owner, runId) {
   const input=step.input||{};
   if(step.step_type==='research_search') {
-    const data=await searchPublicWeb(String(input.query),'WORLD');
-    const results=(data.results||[]).filter(x=>x&&x.title&&x.url).slice(0,5).map(x=>({title:String(x.title).slice(0,240),url:String(x.url).slice(0,1000),snippet:String(x.snippet||x.description||'').slice(0,1200),published_at:String(x.published_at||'').slice(0,100)}));
-    if(!results.length) throw new Error('Research returned no usable sourced results.');
-    return {query:input.query,results,source:data.source||'public-web-search',retrievedAt:data.fetched_at||new Date().toISOString(),verified:false,note:'Search results are leads, not verified facts. Run a verify_url step before treating a source as checked.'};
+    const data=await quickResearch(String(input.query));
+    const results=(data.results||[]).filter(x=>x&&x.title&&x.url).slice(0,5).map(x=>({title:String(x.title).slice(0,240),url:String(x.url).slice(0,1000),snippet:String(x.snippet||'').slice(0,1200)}));
+    return {query:input.query,results,source:data.source,retrievedAt:data.retrievedAt,verified:false,note:results.length?'Search results are leads, not verified facts. Run a verify_url step before treating a source as checked.':'The free public indexes returned no useful result for this query; no result was invented.'};
   }
   if(step.step_type==='verify_url') {
     const result=await verifyUrl(input.url);
@@ -66,6 +88,7 @@ export default async function(req,res) {
     run=(await db.query("UPDATE ultron_agent_runs SET status='running',attempts=attempts+1,lease_until=now()+interval '4 minutes',started_at=COALESCE(started_at,now()),updated_at=now() WHERE id=(SELECT id FROM ultron_agent_runs WHERE status='queued' OR (status='running' AND lease_until<now()) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id,owner_id,title,objective,status,attempts")).rows[0];
   }
   if(!run) return res.json({ok:true,processed:false,note:'No eligible agent run was found.'});
+  await db.query("UPDATE ultron_agent_steps SET status='pending' WHERE run_id=$1 AND owner_id=$2 AND status='running' AND started_at<now()-interval '4 minutes'",[run.id,run.owner_id]);
   const steps=(await db.query("SELECT id,position,step_type,title,input FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND status='pending' ORDER BY position LIMIT 3",[run.id,run.owner_id])).rows;
   let completed=0, failed=0;
   for(const step of steps) {
