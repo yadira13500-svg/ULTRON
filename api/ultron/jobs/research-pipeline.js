@@ -43,7 +43,13 @@ async function ingestSkill(row) {
     if(!/(text\/html|text\/plain|application\/xhtml\+xml)/.test(type)) throw new Error('Source is not an HTML or text documentation page.');
     const declared=Number(response.headers.get('content-length')||0);
     if(declared>1048576) throw new Error('Source exceeds the 1 MB retrieval limit.');
-    const raw=(await response.text()).slice(0,120000);
+    let raw='';
+    try { raw=await response.clone().text(); } catch {}
+    if(typeof raw!=='string'||!raw) {
+      try { raw=new TextDecoder('utf-8').decode(await response.arrayBuffer()); }
+      catch(e) { throw new Error('Source body could not be decoded safely: '+String(e?.message||e).slice(0,160)); }
+    }
+    raw=raw.slice(0,120000);
     const excerpt=clean(raw);
     if(excerpt.length<250) throw new Error('The page did not expose enough readable documentation text.');
     const lesson=(row.lesson ? row.lesson+'\n\n' : '')+'Extracted documentation notes (source page; review before relying on them):\n'+excerpt;

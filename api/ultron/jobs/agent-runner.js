@@ -117,8 +117,12 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
     if(!(type.includes('text/html')||type.includes('text/plain')||type.includes('application/xhtml+xml'))) throw new Error('Unsupported source content type; only HTML and plain text are accepted.');
     const declared=Number(r.headers.get('content-length')||0);
     if(declared>1048576) throw new Error('Source is larger than the 1 MB retrieval limit.');
-    const responseBody=await r.text();
-    const responseText=typeof responseBody==='string'?responseBody:JSON.stringify(responseBody??'');
+    let responseText='';
+    try { responseText=await r.clone().text(); } catch {}
+    if(typeof responseText!=='string'||!responseText) {
+      try { responseText=new TextDecoder('utf-8').decode(await r.arrayBuffer()); }
+      catch(e) { throw new Error('Source body could not be decoded safely: '+String(e?.message||e).slice(0,160)); }
+    }
     const truncated=responseText.length>120000;
     const raw=responseText.slice(0,120000);
     const lower=raw.toLowerCase(), a=lower.indexOf('<title'), b=a>=0?lower.indexOf('>',a):-1, c=b>=0?lower.indexOf('</title>',b):-1;
