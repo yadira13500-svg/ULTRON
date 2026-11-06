@@ -35,8 +35,8 @@ async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia')
   const P = PROV[provider] || PROV.nvidia;
   const OA = provider !== 'nvidia';
   const pinned = await config.get(provider.toUpperCase() + '_MODEL');
-  const fast = ['nvidia/nemotron-3.5-bolt-e4b', 'nvidia/nemotron-3.5-lightning-30b-a3b', 'nvidia/nemotron-3-ultra-550b-a55b', 'mistralai/mistral-large-4-1t-a52b'];
-  const big = ['nvidia/nemotron-3.5-bolt-e4b', 'mistralai/mistral-large-4-1t-a52b', 'nvidia/nemotron-3.5-lightning-30b-a3b'];
+  const fast = ['nvidia/nemotron-3.5-bolt-e4b', 'nvidia/nemotron-3.5-lightning-30b-a3b'];
+  const big = ['nvidia/nemotron-3.5-bolt-e4b', 'nvidia/nemotron-3.5-lightning-30b-a3b'];
   let candidates = [pinned, ...(P.models ? (deep ? P.big : P.fast) : (deep ? big : fast))].filter(Boolean);
   const lastUser = String([...messages].reverse().find(m => m.role === 'user' && !/^Reference notes saved/.test(String(m.content)))?.content || '');
   let nudged = false;
@@ -380,7 +380,7 @@ export default async function (req, res) {
     let result, lastErr, nvErr, usedProv;
     const deepFlag = body.deep === true || (body.voice !== true && ['engineer','legal','wellness','strategist','adaptive'].includes(mode));
     const allowPaidFallback = String(await config.get('ultron_allow_paid_ai_fallback') || '').toLowerCase() === 'true';
-    const order = [['nvidia', 'NVIDIA_API_KEY'], ['groq', 'GROQ_API_KEY'], ...(allowPaidFallback ? [['gemini', 'GEMINI_API_KEY'], ['tokenharbor', 'TOKENHARBOR_API_KEY'], ['openai', 'OPENAI_API_KEY']] : [])];
+    const order = [['nvidia', 'NVIDIA_API_KEY'], ...(allowPaidFallback ? [['groq', 'GROQ_API_KEY'], ['gemini', 'GEMINI_API_KEY'], ['tokenharbor', 'TOKENHARBOR_API_KEY'], ['openai', 'OPENAI_API_KEY']] : [])];
     const errs = [];
     for (const [prov, keyName] of order) {
       const k = await config.get(keyName);
