@@ -25,7 +25,7 @@ const clean = html => String(html || '')
  .replace(/[ \t\r]+/g,' ').replace(/\n\s*\n+/g,'\n').trim().slice(0,14000);
 
 async function ingestSkill(row) {
-  const u=safeUrl(row.source_url);
+  let u=safeUrl(row.source_url);
   if(!u) {
     await db.query("UPDATE ultron_skill_modules SET status='blocked',last_error='Only public HTTPS documentation URLs are accepted.' WHERE id=$1 AND owner_id=$2",[row.id,row.owner_id]);
     return 'blocked';
