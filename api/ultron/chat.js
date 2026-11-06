@@ -83,10 +83,13 @@ async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia')
     convo.push({ role: 'assistant', content: msg.content || '', tool_calls: calls });
     for (const c of calls) {
       let out;
+      const toolName=String(c.function?.name||'unknown');
+      console.log('ULTRON tool dispatch',toolName);
       try {
-        const t = tools[c.function.name];
+        const t = tools[toolName];
         out = t ? await t.execute(JSON.parse(c.function.arguments || '{}')) : { error: 'Unknown tool.' };
       } catch (e) { out = { error: String(e && e.message || e).slice(0, 200) }; }
+      console.log('ULTRON tool result',toolName,out?.error?'error':'ok',Object.keys(out||{}).slice(0,8).join(','));
       convo.push({ role: 'tool', tool_call_id: c.id, content: JSON.stringify(out).slice(0, 6000) });
     }
   }
