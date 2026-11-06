@@ -94,15 +94,16 @@ async function executeStep(step, owner, runId) {
     if(!(type.includes('text/html')||type.includes('text/plain')||type.includes('application/xhtml+xml'))) throw new Error('Unsupported source content type; only HTML and plain text are accepted.');
     const declared=Number(r.headers.get('content-length')||0);
     if(declared>1048576) throw new Error('Source is larger than the 1 MB retrieval limit.');
-    const raw=await r.text();
-    if(raw.length>120000) throw new Error('Source response exceeded the safe text limit.');
+    const responseText=await r.text();
+    const truncated=responseText.length>120000;
+    const raw=responseText.slice(0,120000);
     const lower=raw.toLowerCase(), a=lower.indexOf('<title'), b=a>=0?lower.indexOf('>',a):-1, c=b>=0?lower.indexOf('</title>',b):-1;
     const title=a>=0&&b>=0&&c>b?raw.slice(b+1,c):'';
     let plain='', inside=false, tag=false;
     for(let i=0;i<raw.length&&plain.length<12000;i++){const ch=raw[i];if(ch==='<'){tag=true;inside=false;continue;}if(ch==='>'){tag=false;plain+=' ';continue;}if(!tag)plain+=ch;}
     const excerpt=plain.replaceAll('&nbsp;',' ').replaceAll('&amp;','&').replaceAll('&quot;','"').replaceAll('&#39;',"'").replaceAll('&lt;','<').replaceAll('&gt;','>').replace(/\\s+/g,' ').trim().slice(0,5000);
     if(!excerpt) throw new Error('No readable page text was extracted.');
-    return {retrieved:true,verified:false,verificationType:'source_content_capture',url:u.toString(),httpStatus:r.status,contentType:type,title:title.slice(0,240),excerpt,retrievedAt:new Date().toISOString(),evidenceLimit:'A captured page excerpt is source evidence, not proof that its claims are accurate or independent.'};
+    return {retrieved:true,verified:false,verificationType:'source_content_capture',url:u.toString(),httpStatus:r.status,contentType:type,title:title.slice(0,240),excerpt,truncated,retrievedAt:new Date().toISOString(),evidenceLimit:'A captured page excerpt is source evidence, not proof that its claims are accurate or independent.'};
   }
   if(step.step_type==='create_task') {
     const title=String(input.title||'').trim(), body=String(input.body||'').trim();
