@@ -159,14 +159,32 @@ export default async function (req, res) {
         if (!title || title.length > 180 || String(objective).length > 2000 || !Array.isArray(steps) || !steps.length || steps.length > 16) return { error: 'Provide a title, objective under 2,000 characters and 1–16 supported steps.' };
         const allowed = new Set(['research_search','verify_url','retrieve_source','assess_claim','save_learning','create_task','skill_apply']);
         const normalized = [];
+        const goalQuery=String(objective||title).trim().slice(0,300);
+        let discoveredSourceUrl='';
+        const needsSourceDiscovery=steps.some(s=>['verify_url','retrieve_source'].includes(String(s?.type||''))&&!safePublicUrl(String(s?.input?.url||'')));
+        if(needsSourceDiscovery){
+          try { const found=await searchPublicWeb(goalQuery,'WORLD'); const candidate=(found.results||[]).find(x=>x?.url&&String(x.url).startsWith('https://')&&safePublicUrl(String(x.url))); discoveredSourceUrl=candidate?String(candidate.url).slice(0,1000):''; }
+          catch { discoveredSourceUrl=''; }
+        }
+        let lastSourceUrl='';
         for (let i=0;i<steps.length;i++) {
           const s=steps[i]||{}, type=String(s.type||''), label=String(s.title||type).trim();
           const input=s.input&&typeof s.input==='object'&&!Array.isArray(s.input)?s.input:{};
           if (!allowed.has(type)||!label||label.length>180) return { error: 'Step '+(i+1)+' has an unsupported type or title.' };
-          if (type==='research_search'&&(!String(input.query||'').trim()||String(input.query).length>300)) return { error: 'Research steps need a query under 300 characters.' };
+          if(type==='research_search'){const q=String(input.query||goalQuery).trim();input.query=q.slice(0,300);}
           if (type==='assess_claim'&&(!String(input.claim||'').trim()||String(input.claim).length>600||!Array.isArray(input.source_urls)||input.source_urls.length<2||input.source_urls.length>4||new Set(input.source_urls).size!==input.source_urls.length)) return { error: 'Claim assessment needs a claim under 600 characters and 2–4 distinct source URLs.' };
-          if ((type==='verify_url'||type==='retrieve_source')&&(!safePublicUrl(String(input.url||''))||!String(input.url||'').startsWith('https://'))) return { error: 'Source checks require a public HTTPS URL.' };
-          if (type==='save_learning'&&(!String(input.topic||'').trim()||!String(input.summary||'').trim()||String(input.summary).length>3000)) return { error: 'Learning steps need a topic and summary under 3,000 characters.' };
+          if(type==='verify_url'||type==='retrieve_source'){
+            let url=String(input.url||'');
+            if(!safePublicUrl(url)||!url.startsWith('https://')) url=discoveredSourceUrl;
+            if(!url||!safePublicUrl(url)||!url.startsWith('https://')) return { error:'No safe public HTTPS source could be resolved for this mission. Provide a documentation URL or a more specific goal.' };
+            input.url=url; if(type==='retrieve_source')lastSourceUrl=url;
+          }
+          if(type==='save_learning'){
+            if(!String(input.topic||'').trim())input.topic=String(title).slice(0,240);
+            if(!String(input.source_url||'').trim()&&lastSourceUrl)input.source_url=lastSourceUrl;
+            if(!String(input.topic||'').trim()||(!String(input.summary||'').trim()&&!String(input.source_url||'').trim()))return { error:'Learning needs a topic and either a summary or an earlier captured source.' };
+            if(String(input.summary||'').length>3000)input.summary=String(input.summary).slice(0,3000);
+          }
           if (type==='create_task'&&(!String(input.title||'').trim()||String(input.title).length>180||String(input.body||'').length>2000)) return { error: 'Task steps need a title under 180 characters.' };
           if (type==='skill_apply') { if(!String(input.skill_id||'').trim()||!String(input.task_description||'').trim()||!String(input.metric_label||'').trim()||!Number.isFinite(Number(input.baseline_value))||!['higher_is_better','lower_is_better'].includes(input.metric_direction)) return { error:'Skill application needs a mastered skill, practical task, outcome metric, numeric baseline and direction.' }; const skill=(await db.query("SELECT id FROM ultron_skill_modules WHERE id=$1 AND owner_id=$2 AND status='mastered'",[input.skill_id,owner])).rows[0]; if(!skill)return { error:'Only an owner-reviewed mastered skill can be attached to a mission.' }; }
           const dependsOn=Array.isArray(s.depends_on)?s.depends_on:[];

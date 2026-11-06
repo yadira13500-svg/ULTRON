@@ -171,14 +171,17 @@ async function executeStep(step, owner, runId) {
   }
   if(step.step_type==='save_learning') {
     const sourceUrl=String(input.source_url||'');
-    let sourceName='Owner-provided';
+    let sourceName='Owner-provided', capturedSource=null;
     if(sourceUrl) {
       const prior=(await db.query("SELECT result FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND step_type='retrieve_source' AND status='completed' ORDER BY position DESC",[runId,owner])).rows;
-      const match=prior.map(x=>x.result||{}).find(x=>x.url===sourceUrl&&x.retrieved===true&&x.verificationType==='source_content_capture');
-      if(!match) throw new Error('This source has not had its content captured in this run. Add a retrieve_source step for the same URL before saving sourced learning.');
+      capturedSource=prior.map(x=>x.result||{}).find(x=>x.url===sourceUrl&&x.retrieved===true&&x.verificationType==='source_content_capture')||null;
+      if(!capturedSource) throw new Error('This source has not had its content captured in this run. Add a retrieve_source step for the same URL before saving sourced learning.');
       sourceName=new URL(sourceUrl).hostname.slice(0,160);
     }
-    const topic=String(input.topic).trim().slice(0,240), summary=String(input.summary).trim().slice(0,3000);
+    const topic=String(input.topic||'').trim().slice(0,240);
+    const suppliedSummary=String(input.summary||'').trim();
+    const summary=(suppliedSummary|| (capturedSource?'Extractive source note (not independently verified): '+String(capturedSource.title||'')+'. '+String(capturedSource.excerpt||'').slice(0,2700):'')).slice(0,3000);
+    if(!topic||!summary) throw new Error('Learning needs a topic and either a summary or a previously captured source excerpt.');
     const saved=await db.query("INSERT INTO ultron_knowledge(owner_id,topic,summary,source_url,source_name,published_at,source_status,last_checked_at) VALUES($1,$2,$3,$4,$5,'','available',CASE WHEN $4<>'' THEN now() ELSE NULL END) RETURNING id,topic,summary,source_url,source_name,created_at",[owner,topic,summary,sourceUrl,sourceName]);
     const row=saved.rows[0];
     const persisted=(await db.query('SELECT id,topic,summary,source_url,source_name,created_at FROM ultron_knowledge WHERE id=$1 AND owner_id=$2',[row.id,owner])).rows[0];
