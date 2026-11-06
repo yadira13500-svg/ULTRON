@@ -145,7 +145,7 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
     let cleaned=raw.replace(/\sstyle=(['"])[\s\S]*?\1/gi,' ');
     const pageLower=cleaned.toLowerCase();
     const mainStart=pageLower.indexOf('<main'), articleStart=pageLower.indexOf('<article');
-    const mainIdMatch=cleaned.match(/<[^>]+\\bid\\s*=\\s*(['\"])main\\1[^>]*>/i);
+    const mainIdMatch=cleaned.match(/<[^>]+\bid\s*=\s*["']main["'][^>]*>/i);
     const mainIdStart=mainIdMatch?cleaned.indexOf(mainIdMatch[0]):-1;
     const contentStart=mainStart>=0?mainStart:articleStart>=0?articleStart:mainIdStart;
     if(contentStart>=0) cleaned=cleaned.slice(contentStart);
