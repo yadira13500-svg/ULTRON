@@ -6,7 +6,7 @@ export const methods = ['GET'];
 
 export default async function (req, res) {
   const q = String(req.query?.q || '').trim();
-  const country = String(req.query?.country || 'US').toUpperCase();
+  const country = String(req.query?.country || 'KE').toUpperCase();
   if (!q || q.length > 240) return res.status(400).json({ error: 'Enter a research question up to 240 characters.' });
   try {
     const result = await searchPublicWeb(q, country);
