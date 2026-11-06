@@ -7,7 +7,7 @@ const safeUrl = value => {
   try {
     const u=new URL(String(value||'')), h=u.hostname.toLowerCase();
     if(u.protocol!=='https:'||!h||u.username||u.password||h==='localhost'||h.endsWith('.localhost')||h.endsWith('.local')||
-      /^127\./.test(h)||/^10\./.test(h)||/^192\.168\./.test(h)||/^172\.(1[6-9]|2\d|3[01])\./.test(h)||h==='::1'||h.startsWith('[')) return null;
+      /^127\./.test(h)||/^10\./.test(h)||/^192\.168\./.test(h)||/^172\.(1[6-9]|2\d|3[01])\./.test(h)||/^169\.254\./.test(h)||/^0\./.test(h)||/^224\./.test(h)||h==='::1'||h.startsWith('[')) return null;
     return u;
   } catch { return null; }
 };
@@ -90,8 +90,7 @@ async function executeStep(step, owner, runId) {
   if(step.step_type==='retrieve_source') {
     let u=safeUrl(input.url);
     if(!u) throw new Error('Only public HTTPS sources can be retrieved.');
-    const trustedHosts=['www.rfc-editor.org','datatracker.ietf.org','developer.mozilla.org','www.w3.org','www.nist.gov','www.who.int','www.un.org','www.worldbank.org','www.nature.com','www.science.org','www.reuters.com','apnews.com','www.bbc.com'];
-    if(!trustedHosts.includes(u.hostname.toLowerCase())) throw new Error('Source retrieval is currently limited to approved public reference hosts. The URL can still be checked for reachability, but its content was not fetched.');
+    // Public HTTPS sources are accepted after URL validation; avoid a hard-coded publisher allowlist.
     let r=await fetch(u.toString(),{method:'GET',redirect:'manual',timeout_ms:12000,headers:{'Range':'bytes=0-65535','Accept':'text/html,text/plain,application/xhtml+xml','User-Agent':'ULTRON-Agent/1.0'}});
     if(r.status>=300&&r.status<400) {
       const loc=r.headers.get('location'), next=loc?safeUrl(new URL(loc,u).toString()):null;
