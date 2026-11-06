@@ -89,7 +89,7 @@ async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia')
         const t = tools[toolName];
         out = t ? await t.execute(JSON.parse(c.function.arguments || '{}')) : { error: 'Unknown tool.' };
       } catch (e) { out = { error: String(e && e.message || e).slice(0, 200) }; }
-      console.log('ULTRON tool result',toolName,out?.error?'error':'ok',Object.keys(out||{}).slice(0,8).join(','));
+      console.log('ULTRON tool result',toolName,out?.error?'error':'ok',Object.keys(out||{}).slice(0,8).join(','),out?.error?String(out.error).slice(0,180):'');
       convo.push({ role: 'tool', tool_call_id: c.id, content: JSON.stringify(out).slice(0, 6000) });
     }
   }
@@ -153,7 +153,7 @@ export default async function (req, res) {
       }
     },
     launchMission: {
-      description: 'Create a durable ULTRON agent mission when the user asks you to research, learn, apply knowledge or complete a multi-step task. First reason about the goal, break it into up to 16 ordered steps, identify prerequisites with depends_on step positions, and include explicit verification steps. Supported actions are free public research, checking URL reachability, capturing bounded excerpts from public HTTPS sources, assessing captured claims, saving sourced knowledge, creating local tasks, and applying owner-mastered skills. Never use this tool for sending messages, spending money, deleting data, changing accounts or other external consequential actions. Explain that retrieval and operational checks do not prove factual accuracy.',
+      description: 'Create a durable ULTRON agent mission when the user asks you to research, learn, apply knowledge or complete a multi-step task. First reason about the goal, break it into up to 16 ordered steps, identify prerequisites with depends_on step positions, and include explicit verification steps. Supported actions are free public research, checking URL reachability, capturing bounded excerpts from public HTTPS sources, assessing captured claims, saving sourced knowledge, creating local tasks, and applying owner-mastered skills. For save_learning, always supply a non-empty topic and a concise summary under 3,000 characters; when source_url is supplied, first add retrieve_source for that exact URL earlier in the plan. Never use this tool for sending messages, spending money, deleting data, changing accounts or other external consequential actions. Explain that retrieval and operational checks do not prove factual accuracy.',
       inputSchema: { type: 'object', properties: { title: { type: 'string' }, objective: { type: 'string' }, steps: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'object', properties: { type: { type: 'string', enum: ['research_search','verify_url','retrieve_source','assess_claim','save_learning','create_task','skill_apply'] }, title: { type: 'string' }, input: { type: 'object' }, depends_on: { type: 'array', items: { type: 'integer' }, maxItems: 8 } }, required: ['type','title','input'] } } }, required: ['title','objective','steps'] },
       execute: async ({ title, objective = '', steps = [] }) => {
         if (!title || title.length > 180 || String(objective).length > 2000 || !Array.isArray(steps) || !steps.length || steps.length > 16) return { error: 'Provide a title, objective under 2,000 characters and 1–16 supported steps.' };
