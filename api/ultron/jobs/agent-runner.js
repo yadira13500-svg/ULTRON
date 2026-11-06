@@ -131,7 +131,7 @@ async function executeStep(step, owner, runId) {
     }
     let plain='', tag=false;
     for(let i=0;i<cleaned.length&&plain.length<20000;i++){const ch=cleaned[i];if(ch==='<'){tag=true;continue;}if(ch==='>'){tag=false;plain+=' ';continue;}if(!tag)plain+=ch;}
-    const excerpt=plain.replaceAll('&nbsp;',' ').replaceAll('&amp;','&').replaceAll('&quot;','"').replaceAll('&#39;',"'").replaceAll('&lt;','<').replaceAll('&gt;','>').replace(/\s+/g,' ').trim().slice(0,8000);
+    const excerpt=plain.replaceAll('&nbsp;',' ').replaceAll('&amp;','&').replaceAll('&quot;','"').replaceAll('&#39;',"'").replaceAll('&lt;','<').replaceAll('&gt;','>').replace(/\s+/g,' ').trim().slice(0,14000);
     if(!excerpt) throw new Error('No readable page text was extracted.');
     const visiblePublished=excerpt.match(/(?:Published|Publication date)\s*:\s*([A-Z][a-z]+\s+\d{4}(?:-\d{2}-\d{2})?)/);
     const visibleModified=excerpt.match(/(?:Last updated|Modified)\s*:\s*([A-Z][a-z]+\s+\d{4}(?:-\d{2}-\d{2})?)/);
