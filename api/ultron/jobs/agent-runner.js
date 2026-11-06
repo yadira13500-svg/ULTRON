@@ -146,8 +146,8 @@ async function executeStep(step, owner, runId) {
     const prior=(await db.query("SELECT result FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND step_type='retrieve_source' AND status='completed' ORDER BY position",[runId,owner])).rows.map(x=>x.result||{});
     const evidence=urls.map(url=>prior.find(x=>x.url===url&&x.retrieved===true&&x.verificationType==='source_content_capture')).filter(Boolean);
     if(evidence.length!==urls.length) throw new Error('Every source must be captured successfully before claim assessment.');
-    const stop=new Set(['about','after','again','against','also','among','because','been','being','between','could','does','during','each','from','have','into','more','most','other','over','same','should','some','such','than','that','their','there','these','they','this','those','through','under','very','were','what','when','where','which','while','with','would','your']);
-    const terms=(claim.toLowerCase().match(/[a-z0-9]{3,}/g)||[]).filter(x=>!stop.has(x));
+    const stop=new Set(['about','after','again','against','also','among','and','are','because','been','being','between','but','can','could','did','does','doing','during','each','for','from','had','has','have','into','its','may','more','most','not','of','other','over','same','should','some','such','than','that','the','their','there','these','they','this','those','through','to','under','very','was','were','what','when','where','which','while','with','would','your']);
+    const terms=[...new Set((claim.toLowerCase().match(/[a-z0-9]{3,}/g)||[]).filter(x=>!stop.has(x)))];
     const matches=evidence.map(source=>{
       const sentences=String(source.excerpt||'').split(/(?<=[.!?])\s+/).slice(0,180);
       let best={sentence:'',overlap:0,matchedTerms:[]};
