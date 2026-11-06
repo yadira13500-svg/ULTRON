@@ -16,7 +16,7 @@ export default async function(req,res){
    db.query('SELECT id,lesson,evidence,confidence,status,created_at,reviewed_at FROM ultron_agent_lessons WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner]),
    db.query('SELECT id,run_id,step_id,claim_text,assessment_status,review_status,verification_state,method,assessment,reviewer_note,correction,created_at,reviewed_at FROM ultron_claim_reviews WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner])
   ]);
-  const assessments=await db.query('SELECT id,skill_id,answers,score,practical_pass,reviewer_notes,status,submitted_at,reviewed_at,weak_concepts,practice_tasks,concept_results FROM ultron_skill_assessments WHERE owner_id=$1 ORDER BY submitted_at DESC LIMIT 100',[owner]);
+  const assessments=await db.query('SELECT id,skill_id,answers,score,practical_pass,practical_evidence,reviewer_notes,status,submitted_at,reviewed_at,weak_concepts,practice_tasks,concept_results FROM ultron_skill_assessments WHERE owner_id=$1 ORDER BY submitted_at DESC LIMIT 100',[owner]);
   const applications=await db.query('SELECT id,skill_id,run_id,task_description,metric_label,metric_direction,baseline_value,outcome_value,outcome_note,improvement_value,improvement_percent,status,created_at,measured_at FROM ultron_skill_applications WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner]);
   return res.json({preferences:p.rows,nodes:n.rows,edges:e.rows,researchPlans:r.rows,feedback:f.rows,skills:s.rows,skillAssessments:assessments.rows,skillApplications:applications.rows,suggestions:g.rows,agentLessons:l.rows,claimReviews:c.rows,domains});
  }
@@ -119,6 +119,9 @@ export default async function(req,res){
   if(b.type==='skill_assessment'&&b.id){
    const score=Number(b.score);
    if(!Number.isFinite(score)||score<0||score>100||typeof b.practical_pass!=='boolean')return res.status(400).json({error:'Provide a knowledge score from 0 to 100 and an explicit practical pass/fail result.'});
+   const practical=b.practical_evidence&&typeof b.practical_evidence==='object'&&!Array.isArray(b.practical_evidence)?b.practical_evidence:{};
+   const practicalEvidence={task:String(practical.task||'').trim().slice(0,1000),submitted_work:String(practical.submitted_work||'').trim().slice(0,12000),verification_method:String(practical.verification_method||'').trim().slice(0,1000),reviewer_result:String(practical.reviewer_result||'').trim().slice(0,2000)};
+   if(b.practical_pass===true&&(!practicalEvidence.task||!practicalEvidence.submitted_work||!practicalEvidence.verification_method||!practicalEvidence.reviewer_result))return res.status(400).json({error:'A practical pass requires the task, submitted work, verification method and reviewer result to be stored as evidence.'});
    const notes=String(b.reviewer_notes||'').trim().slice(0,2000);
    const weak=Array.isArray(b.weak_concepts)?b.weak_concepts.slice(0,20).map(x=>String(x).slice(0,100)):[];
    const practice=Array.isArray(b.practice_tasks)?b.practice_tasks.slice(0,12).map(x=>String(x).slice(0,500)):[];
@@ -127,7 +130,7 @@ export default async function(req,res){
    if(weak.some(id=>!concepts.some(c=>c.id===id)))return res.status(400).json({error:'A weak concept ID does not belong to this skill module.'});
    if(weak.length&&!practice.length)return res.status(400).json({error:'Create at least one targeted practice assignment for the weak concepts before saving this review.'});
    const conceptResults=concepts.map(c=>({concept_id:c.id,status:weak.includes(c.id)?'needs_practice':'not_flagged_by_reviewer'}));
-   const assessment=(await db.query("UPDATE ultron_skill_assessments SET score=$3,practical_pass=$4,reviewer_notes=$5,weak_concepts=$6::jsonb,practice_tasks=$7::jsonb,concept_results=$8::jsonb,status='reviewed',reviewed_at=now() WHERE id=$1 AND owner_id=$2 RETURNING id,skill_id,score,practical_pass,reviewer_notes,status,reviewed_at,weak_concepts,practice_tasks,concept_results",[b.id,owner,score,b.practical_pass,notes,JSON.stringify(weak),JSON.stringify(practice),JSON.stringify(conceptResults)])).rows[0];
+   const assessment=(await db.query("UPDATE ultron_skill_assessments SET score=$3,practical_pass=$4,practical_evidence=$5::jsonb,reviewer_notes=$6,weak_concepts=$7::jsonb,practice_tasks=$8::jsonb,concept_results=$9::jsonb,status='reviewed',reviewed_at=now() WHERE id=$1 AND owner_id=$2 RETURNING id,skill_id,score,practical_pass,practical_evidence,reviewer_notes,status,reviewed_at,weak_concepts,practice_tasks,concept_results",[b.id,owner,score,b.practical_pass,JSON.stringify(practicalEvidence),notes,JSON.stringify(weak),JSON.stringify(practice),JSON.stringify(conceptResults)])).rows[0];
    if(!assessment)return res.status(404).json({error:'Assessment not found.'});
    const mastered=score>=80&&b.practical_pass===true&&weak.length===0;
    await db.query("UPDATE ultron_skill_modules SET status=$3,weak_concepts_json=$4::jsonb,practice_tasks_json=$5::jsonb WHERE id=$1 AND owner_id=$2",[assessment.skill_id,owner,mastered?'mastered':'ready',JSON.stringify(weak),JSON.stringify(practice)]);
