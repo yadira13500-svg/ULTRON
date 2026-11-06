@@ -254,7 +254,8 @@ export default async function(req,res) {
       ? 'Observed failure pattern: the '+String(item.step_type)+' step "'+String(item.title).slice(0,140)+'" failed. Review the recorded error and adjust the plan or inputs before retrying; do not assume the same attempt will succeed.'
       : 'Observed operationally verified outcome: the '+String(item.step_type)+' step "'+String(item.title).slice(0,140)+'" passed its explicit '+String((item.result||{}).verificationType||'')+' operation check. This does not establish factual accuracy; re-check when inputs or environment change.';
     const evidence={runId:run.id,stepId:item.id,position:item.position,stepType:item.step_type,status:item.status,operationVerified:!isFailure,verified:!!((item.result||{}).verified),factualAccuracyVerified:false,error:isFailure?String(item.error||'').slice(0,500):'',resultType:String((item.result||{}).verificationType||'')};
-    await db.query("INSERT INTO ultron_agent_lessons(owner_id,lesson_key,lesson,evidence,confidence,status) VALUES($1,$2,$3,$4::jsonb,$5,'candidate') ON CONFLICT(owner_id,lesson_key) DO NOTHING",[run.owner_id,run.id+':'+item.position,lesson,JSON.stringify(evidence),isFailure?0.65:0.55]);
+    const lessonKey=(isFailure?'failure:':'success:')+String(item.step_type);
+    await db.query("INSERT INTO ultron_agent_lessons(owner_id,lesson_key,lesson,evidence,confidence,status) VALUES($1,$2,$3,$4::jsonb,$5,'candidate') ON CONFLICT(owner_id,lesson_key) DO UPDATE SET lesson=EXCLUDED.lesson,evidence=EXCLUDED.evidence,confidence=GREATEST(ultron_agent_lessons.confidence,EXCLUDED.confidence) WHERE ultron_agent_lessons.status='candidate'",[run.owner_id,lessonKey,lesson,JSON.stringify(evidence),isFailure?0.65:0.55]);
   }
   if(counts.pending===0&&counts.failed===0) {
     const fullyOperationallyVerified=counts.completed>0&&counts.verified===counts.completed;
