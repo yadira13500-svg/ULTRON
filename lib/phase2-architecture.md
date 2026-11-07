@@ -159,4 +159,9 @@ Turn the current single-runner workflow into a coordinated team of bounded speci
 - The finalizer now counts running steps explicitly and refuses to complete a mission while any step remains running. Completed step rows are still committed only through a conditional running-to-completed update, and persisted task/knowledge writes retain their per-step idempotency keys and read-back verification.
 - Regression coverage distinguishes expired execution, active execution, pending verification while execution remains active, stale running steps and completed steps. This is lease coordination and operation-level replay protection; external non-idempotent actions remain approval-gated and require their own provider-specific idempotency guarantees.
 
+## Crash-window replay contracts (v246)
+- Added shared immutable-field replay checks for task, knowledge and skill-application writes. A retry must match the original mission-step payload; changed titles/bodies, knowledge summaries/source identity, or skill metric/baseline evidence are rejected without overwriting the original record.
+- Skill-application replay now reads the existing owner/step record before requiring the skill to remain currently mastered. This closes a crash window where a successful application write could become unreplayable after the skill's lifecycle state changed. Replays preserve a later measured/closed/stale lifecycle state rather than forcing it back to its initial state.
+- New deterministic self-test fixtures verify exact replay acceptance, changed immutable input rejection across all three write types, and preservation of later lifecycle states. These are contract tests; they do not replace live database fault-injection for every storage backend boundary.
+
 This document records the live bounded-specialist implementation and explicitly distinguishes it from fully autonomous, model-backed specialist agents.

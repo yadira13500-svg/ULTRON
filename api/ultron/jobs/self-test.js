@@ -13,6 +13,7 @@ import { analyzeSentence, analyzeClaimEvidence, stanceOf, sourceIndependence, ev
 import { buildDocumentContext } from 'lib/document-context.js';
 import { verifyOutcome } from 'lib/outcome.js';
 import { sentinelSafetySelfTest } from 'lib/sentinel-safety.js';
+import { matchesTaskReplay, matchesKnowledgeReplay, matchesSkillApplicationReplay } from 'lib/mission-idempotency.js';
 import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment, recommendLessonStrategies, applyApprovedStrategyPolicy, summarizeStrategyTrialOutcomes } from 'lib/learning-evaluation.js';
 
 export const access = 'scheduler';
@@ -50,6 +51,24 @@ async function probe(name, url) {
     if (timer) clearTimeout(timer);
     return { name, ok: false, status: 0, ms: Date.now() - t0, error: String((e && e.message) || e).slice(0, 120) };
   }
+}
+
+function testCrashWindowReplayContracts() {
+  const task={title:'Prepare report',body:'Use the approved source set.',kind:'task',status:'closed'};
+  const taskExpected={title:'Prepare report',body:'Use the approved source set.'};
+  const knowledge={topic:'Reliability',summary:'Original verified note',source_url:'https://example.org/a',source_name:'Example',source_status:'stale'};
+  const knowledgeExpected={topic:'Reliability',summary:'Original verified note',sourceUrl:'https://example.org/a',sourceName:'Example'};
+  const skill={skill_id:'skill-1',run_id:'run-1',task_description:'Practice the method',metric_label:'Accuracy',metric_direction:'higher_is_better',baseline_value:0.6,baseline_evidence:'Measured across ten attempts',status:'measured'};
+  const skillExpected={skillId:'skill-1',runId:'run-1',task:'Practice the method',metric:'Accuracy',direction:'higher_is_better',baseline:0.6,baselineEvidence:'Measured across ten attempts'};
+  const taskReplay=matchesTaskReplay(task,taskExpected);
+  const taskConflict=!matchesTaskReplay({...task,body:'Changed body'},taskExpected);
+  const knowledgeReplay=matchesKnowledgeReplay(knowledge,knowledgeExpected);
+  const knowledgeConflict=!matchesKnowledgeReplay({...knowledge,source_name:'Different publisher'},knowledgeExpected);
+  const skillReplay=matchesSkillApplicationReplay(skill,skillExpected);
+  const skillConflict=!matchesSkillApplicationReplay({...skill,baseline_evidence:'Changed measurement'},skillExpected);
+  const statusPreserved=task.status==='closed'&&knowledge.source_status==='stale'&&skill.status==='measured';
+  const ok=taskReplay&&taskConflict&&knowledgeReplay&&knowledgeConflict&&skillReplay&&skillConflict&&statusPreserved;
+  return {name:'crash_window_idempotent_replay_contracts',ok,semantic:ok,detail:ok?'Exact replays reuse the original task, knowledge and skill-application identities; changed immutable inputs are rejected; later lifecycle states are preserved.':'A replay contract accepted changed content or failed to preserve a later lifecycle state.',taskReplay,taskConflictRejected:taskConflict,knowledgeReplay,knowledgeConflictRejected:knowledgeConflict,skillReplay,skillConflictRejected:skillConflict,lifecycleStatePreserved:statusPreserved};
 }
 
 function testMissionPlanningRegression() {
@@ -477,6 +496,7 @@ export default async function (req, res) {
   results.push(testLessonExperimentMeasurement());
   results.push(testAdaptiveStrategyRecommendations());
   results.push(testStrategyTrialTracking());
+  results.push(testCrashWindowReplayContracts());
   results.push(testCancellationGuards());
   results.push(testMissionGraphPolicy());
   results.push(testSpecialistRevisionPolicy());

@@ -6,6 +6,7 @@ import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRole
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
 import { buildMissionCoordinationReport } from 'lib/mission-coordinator.js';
 import { createLessonObservationEvents, assignLessonExperiment, createExperimentObservationEvent, applyApprovedStrategyPolicy } from 'lib/learning-evaluation.js';
+import { matchesTaskReplay, matchesKnowledgeReplay, matchesSkillApplicationReplay } from 'lib/mission-idempotency.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -91,14 +92,22 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
     if(priorReview)lessonUses.push({type:'case_specific_human_review',lessonId:priorReview.id,reviewStatus:priorReview.evidence.reviewStatus,machineVerified:false,detail:'A prior human review exists for this exact claim; it is historical context only and does not replace fresh source checks or owner review.'});
   }
   if(step.step_type==='skill_apply') {
-    const skill=(await db.query("SELECT id,title,concepts_json,objectives_json FROM ultron_skill_modules WHERE id=$1 AND owner_id=$2 AND status='mastered'",[input.skill_id,owner])).rows[0];
-    if(!skill) throw new Error('Skill is no longer owner-reviewed as mastered; application was blocked.');
     const task=String(input.task_description||'').trim().slice(0,2000),metric=String(input.metric_label||'').trim().slice(0,120),baseline=Number(input.baseline_value),baselineEvidence=String(input.baseline_evidence||'').trim().slice(0,2000),direction=['higher_is_better','lower_is_better'].includes(input.metric_direction)?input.metric_direction:'higher_is_better';
     if(!task||!metric||!Number.isFinite(baseline)||baselineEvidence.length<12) throw new Error('Skill application requires a practical task, numeric baseline, and a substantive note describing how the baseline was measured.');
+    const expected={skillId:input.skill_id,runId,task,metric,direction,baseline,baselineEvidence};
+    // Check the durable record before checking current skill status: a previously
+    // successful write must remain replayable even if its lifecycle later changes.
+    const prior=(await db.query('SELECT a.id,a.skill_id,a.run_id,a.task_description,a.metric_label,a.metric_direction,a.baseline_value,a.baseline_evidence,a.status,a.created_at,s.title AS skill_title,s.concepts_json,s.objectives_json FROM ultron_skill_applications a LEFT JOIN ultron_skill_modules s ON s.id=a.skill_id AND s.owner_id=a.owner_id WHERE a.owner_id=$1 AND a.agent_step_id=$2',[owner,step.id])).rows[0];
+    if(prior) {
+      if(!matchesSkillApplicationReplay(prior,expected)) throw new Error('A prior skill-application write exists for this mission step but its immutable inputs differ. ULTRON preserved the original record and blocked an overwrite.');
+      return {application:prior,created:false,idempotentReplay:true,skillTitle:prior.skill_title||'Previously applied skill',operationVerified:true,verified:true,verificationType:'skill_application_persistence',note:'The original skill-application record was read back and preserved; its current lifecycle status was not reset.'};
+    }
+    const skill=(await db.query("SELECT id,title,concepts_json,objectives_json FROM ultron_skill_modules WHERE id=$1 AND owner_id=$2 AND status='mastered'",[input.skill_id,owner])).rows[0];
+    if(!skill) throw new Error('Skill is no longer owner-reviewed as mastered; a new application was blocked.');
     const inserted=await db.query("INSERT INTO ultron_skill_applications(owner_id,skill_id,run_id,agent_step_id,task_description,metric_label,metric_direction,baseline_value,baseline_evidence,status) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,'awaiting_outcome' WHERE EXISTS(SELECT 1 FROM ultron_agent_runs WHERE id=$3 AND owner_id=$1 AND status='running') ON CONFLICT(owner_id,agent_step_id) WHERE agent_step_id IS NOT NULL DO NOTHING RETURNING id,skill_id,run_id,task_description,metric_label,metric_direction,baseline_value,baseline_evidence,status,created_at",[owner,skill.id,runId,step.id,task,metric,direction,baseline,baselineEvidence]);
     const application=inserted.rows[0]||(await db.query('SELECT id,skill_id,run_id,task_description,metric_label,metric_direction,baseline_value,baseline_evidence,status,created_at FROM ultron_skill_applications WHERE owner_id=$1 AND agent_step_id=$2',[owner,step.id])).rows[0];
     const check=application?(await db.query('SELECT id,skill_id,run_id,task_description,metric_label,metric_direction,baseline_value,baseline_evidence,status FROM ultron_skill_applications WHERE id=$1 AND owner_id=$2',[application.id,owner])).rows[0]:null;
-    if(!check||check.status!=='awaiting_outcome'||check.skill_id!==skill.id||check.run_id!==runId||check.task_description!==task||check.metric_label!==metric||Number(check.baseline_value)!==baseline) throw new Error('Skill application record was not persisted with the expected mission-step identity and values.');
+    if(!matchesSkillApplicationReplay(check,expected)) throw new Error('Skill application record was not persisted with the exact expected mission-step identity and immutable values.');
     return {application:check,created:!!inserted.rows[0],idempotentReplay:!inserted.rows[0],skillTitle:skill.title,conceptsConsulted:Array.isArray(skill.concepts_json)?skill.concepts_json.length:0,objectivesConsulted:Array.isArray(skill.objectives_json)?skill.objectives_json.length:0,operationVerified:true,verified:true,verificationType:'skill_application_persistence',note:'A mastered skill is linked to this mission. Record a comparable post-task metric after the practical work to measure change.'};
   }
   if(step.step_type==='research_search') {
@@ -241,8 +250,8 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
     const title=String(input.title||'').trim(), body=String(input.body||'').trim();
     const inserted=await db.query("INSERT INTO ultron_items(owner_id,kind,title,body,status,agent_step_id) SELECT $1,'task',$2,$3,'open',$4 WHERE EXISTS(SELECT 1 FROM ultron_agent_runs WHERE id=$5 AND owner_id=$1 AND status='running') ON CONFLICT(owner_id,agent_step_id) WHERE agent_step_id IS NOT NULL DO NOTHING RETURNING id,title,kind,status,created_at",[owner,title,body,step.id,runId]);
     const saved=inserted.rows[0]||(await db.query('SELECT id,title,kind,status,created_at FROM ultron_items WHERE owner_id=$1 AND agent_step_id=$2',[owner,step.id])).rows[0];
-    const check=saved?(await db.query('SELECT id,title,kind,status FROM ultron_items WHERE id=$1 AND owner_id=$2',[saved.id,owner])).rows[0]:null;
-    if(!check||check.id!==saved.id||check.title!==title||check.kind!=='task') throw new Error('The task was not persisted with the expected mission-step identity.');
+    const check=saved?(await db.query('SELECT id,title,body,kind,status FROM ultron_items WHERE id=$1 AND owner_id=$2',[saved.id,owner])).rows[0]:null;
+    if(!matchesTaskReplay(check,{title,body})) throw new Error('A task record exists for this mission step but its immutable title/body do not match. ULTRON preserved the original record and blocked an overwrite.');
     return {created:!!inserted.rows[0],idempotentReplay:!inserted.rows[0],operationVerified:true,verified:true,item:check};
   }
   if(step.step_type==='save_learning') {
@@ -261,7 +270,7 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
     const saved=await db.query("INSERT INTO ultron_knowledge(owner_id,topic,summary,source_url,source_name,published_at,source_status,last_checked_at,agent_step_id) SELECT $1,$2,$3,$4,$5,'','available',CASE WHEN $4<>'' THEN now() ELSE NULL END,$6 WHERE EXISTS(SELECT 1 FROM ultron_agent_runs WHERE id=$7 AND owner_id=$1 AND status='running') ON CONFLICT(owner_id,agent_step_id) WHERE agent_step_id IS NOT NULL DO NOTHING RETURNING id,topic,summary,source_url,source_name,created_at",[owner,topic,summary,sourceUrl,sourceName,step.id,runId]);
     const row=saved.rows[0]||(await db.query('SELECT id,topic,summary,source_url,source_name,created_at FROM ultron_knowledge WHERE owner_id=$1 AND agent_step_id=$2',[owner,step.id])).rows[0];
     const persisted=row?(await db.query('SELECT id,topic,summary,source_url,source_name,created_at FROM ultron_knowledge WHERE id=$1 AND owner_id=$2',[row.id,owner])).rows[0]:null;
-    if(!persisted||persisted.topic!==topic||persisted.summary!==summary||persisted.source_url!==sourceUrl) throw new Error('Learning was written but its persisted contents could not be independently checked.');
+    if(!matchesKnowledgeReplay(persisted,{topic,summary,sourceUrl,sourceName})) throw new Error('A knowledge record exists for this mission step but its immutable content/source fields do not match. ULTRON preserved the original record and blocked an overwrite.');
     return {saved:!!saved.rows[0],idempotentReplay:!saved.rows[0],operationVerified:true,verified:true,verificationType:'knowledge_persistence',knowledge:persisted,sourceReachable:!!sourceUrl,factualAccuracyVerified:false,note:'The knowledge record was read back successfully. Its factual claims have not been independently established.'};
   }
   throw new Error('Unsupported agent step type.');
