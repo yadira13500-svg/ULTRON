@@ -2,7 +2,7 @@ import { checkSourceFreshness } from 'lib/source-check.js';
 import { searchPublicWeb } from 'lib/search.js';
 import { extractResearchQuery, planMission } from 'lib/mission-plan.js';
 import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
-import { verifyStepResult } from 'lib/specialist-verifier.js';
+import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
 import { analyzeSentence, sourceIndependence } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
 
@@ -92,6 +92,17 @@ function testMissionGraphPolicy() {
   return {name:'mission_graph_and_coordinator_policy',ok,semantic:ok,detail:ok?'Acyclic earlier-step dependencies, independent branch readiness and coordinator capability boundaries passed.':'Mission graph validation or coordinator capability policy regressed.',nodeCount:graph.length,independentBranches:independent};
 }
 
+function testSpecialistRevisionPolicy() {
+  const step={step_type:'research_search',input:{query:'battery recycling market trends'}};
+  const rejected={checks:[{name:'search_leads_have_titles_and_https_urls',ok:false,evidence:'0 valid HTTPS leads of 0 returned'}]};
+  const revision=buildRevisionRequest(step,{results:[]},rejected,1);
+  const capped=buildRevisionRequest({...step,input:{query:'x'.repeat(300)}},{results:[]},rejected,1);
+  const exhausted=buildRevisionRequest(step,{results:[]},rejected,2);
+  const unsupported=buildRevisionRequest({...step,step_type:'create_task'},{results:[]},rejected,1);
+  const ok=!!revision&&revision.input.query.length<=300&&revision.input.query!==step.input.query&&revision.mode==='bounded_deterministic_query_revision'&&!capped&&!exhausted&&!unsupported;
+  return {name:'specialist_revision_budget_and_scope',ok,semantic:ok,detail:ok?'Rejected research receives one bounded, auditable query revision; unsupported write operations and exhausted budgets are not revised.':'Specialist revision policy exceeded its scope or budget.',revisionAvailable:!!revision,queryLength:revision?.input.query.length||0,secondRevisionBlocked:!exhausted,writeOperationBlocked:!unsupported};
+}
+
 async function testParallelExecution() {
   let active=0,maxActive=0;
   const results=await runParallel([1,2,3,4,5],async value=>{active++;maxActive=Math.max(maxActive,active);await Promise.resolve();active--;return value*2;},MAX_SPECIALIST_CONCURRENCY);
@@ -152,6 +163,7 @@ export default async function (req, res) {
   results.push(testMissionPlanningRegression());
   results.push(testMissionRuntimePolicies());
   results.push(testMissionGraphPolicy());
+  results.push(testSpecialistRevisionPolicy());
   results.push(await testParallelExecution());
   results.push(await testIndependentVerifier());
   results.push(testGeneralOutcomeVerification());

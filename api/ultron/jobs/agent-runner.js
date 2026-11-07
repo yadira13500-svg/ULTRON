@@ -3,7 +3,7 @@ import { analyzeClaimEvidence } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
 import { searchPublicWeb } from 'lib/search.js';
 import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
-import { verifyStepResult } from 'lib/specialist-verifier.js';
+import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -294,12 +294,34 @@ export default async function(req,res) {
     if(!executionTask){await db.query("UPDATE ultron_agent_steps SET status='pending',started_at=NULL WHERE id=$1 AND owner_id=$2 AND status='running'",[step.id,run.owner_id]);return {kind:'skipped',step,note:'Specialist execution task was not claimable.'};}
     try {
       const approvedLessons=(await db.query("SELECT id,lesson,confidence,evidence FROM ultron_agent_lessons WHERE owner_id=$1 AND status='approved' AND evidence->>'stepType'=$2 ORDER BY reviewed_at DESC LIMIT 3",[run.owner_id,step.step_type])).rows;
-      const result=await executeStep(step,run.owner_id,run.id,approvedLessons);
+      let workingStep=step;
+      let result=await executeStep(workingStep,run.owner_id,run.id,approvedLessons);
       const verifierTask=(await db.query("UPDATE ultron_specialist_tasks SET status='running',attempts=attempts+1,lease_until=now()+interval '10 minutes',error='',updated_at=now() WHERE owner_id=$1 AND step_id=$2 AND phase='verification' AND status IN ('pending','running') RETURNING id",[run.owner_id,step.id])).rows[0];
       if(!verifierTask)throw new Error('Independent verifier task could not be claimed.');
-      const independentVerification=await verifyStepResult(step,result,db,run.owner_id,run.id);
-      await db.query("UPDATE ultron_specialist_tasks SET status=$3,verification=$4::jsonb,lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2",[verifierTask.id,run.owner_id,independentVerification.passed?'completed':'failed',JSON.stringify(independentVerification)]);
-      if(!independentVerification.passed)throw new Error('Independent verifier rejected '+role+' output: '+independentVerification.challenge.join('; '));
+      let independentVerification=await verifyStepResult(workingStep,result,db,run.owner_id,run.id);
+      const revisionHistory=[];
+      for(let revisionNo=1;!independentVerification.passed&&revisionNo<=1;revisionNo++) {
+        const revision=buildRevisionRequest(workingStep,result,independentVerification,revisionNo);
+        if(!revision)break;
+        const savedRevision=(await db.query("INSERT INTO ultron_specialist_revisions(owner_id,run_id,step_id,revision_no,specialist_role,revision_instruction,input_snapshot,prior_output,prior_verification,status) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,'requested') ON CONFLICT(owner_id,step_id,revision_no) DO NOTHING RETURNING id",[run.owner_id,run.id,step.id,revisionNo,role,revision.instruction,JSON.stringify(revision.input),JSON.stringify(result),JSON.stringify(independentVerification)])).rows[0];
+        if(!savedRevision)break;
+        revisionHistory.push({id:savedRevision.id,revisionNo,role,instruction:revision.instruction,reason:revision.reason,mode:revision.mode});
+        workingStep={...step,input:revision.input};
+        await db.query("UPDATE ultron_specialist_tasks SET attempts=attempts+1,context_snapshot=$3::jsonb,updated_at=now() WHERE id=$1 AND owner_id=$2",[executionTask.id,run.owner_id,JSON.stringify({position:step.position,stepType:step.step_type,title:step.title,input:revision.input,depends_on:step.depends_on||[],revisionNo})]);
+        await db.query("UPDATE ultron_specialist_tasks SET attempts=attempts+1,context_snapshot=$3::jsonb,updated_at=now() WHERE id=$1 AND owner_id=$2",[verifierTask.id,run.owner_id,JSON.stringify({position:step.position,targetStepId:step.id,targetRole:role,verificationContract:'independent_operation_evidence_review',revisionNo})]);
+        try {
+          result=await executeStep(workingStep,run.owner_id,run.id,approvedLessons);
+          independentVerification=await verifyStepResult(workingStep,result,db,run.owner_id,run.id);
+          await db.query("UPDATE ultron_specialist_revisions SET revised_output=$4::jsonb,revised_verification=$5::jsonb,status=$6,error='',completed_at=now() WHERE id=$1 AND owner_id=$2 AND step_id=$3",[savedRevision.id,run.owner_id,step.id,JSON.stringify(result),JSON.stringify(independentVerification),independentVerification.passed?'accepted':'rejected']);
+        } catch(revisionError) {
+          const revisionMessage=String(revisionError?.message||revisionError).slice(0,500);
+          await db.query("UPDATE ultron_specialist_revisions SET status='rejected',error=$4,completed_at=now() WHERE id=$1 AND owner_id=$2 AND step_id=$3",[savedRevision.id,run.owner_id,step.id,revisionMessage]);
+          throw revisionError;
+        }
+      }
+      await db.query("UPDATE ultron_specialist_tasks SET status=$3,verification=$4::jsonb,lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2",[verifierTask.id,run.owner_id,independentVerification.passed?'completed':'failed',JSON.stringify({...independentVerification,revisionCount:revisionHistory.length})]);
+      if(!independentVerification.passed)throw new Error('Independent verifier rejected '+role+' output after '+revisionHistory.length+' bounded revision(s): '+independentVerification.challenge.join('; '));
+      if(revisionHistory.length)result.specialistRevisions=revisionHistory;
       result.specialist={role,worker:'bounded_deterministic_specialist',parallelBatchLimit:MAX_SPECIALIST_CONCURRENCY,executionTaskId:executionTask.id,verifierTaskId:verifierTask.id};
       result.independentVerification=independentVerification;
       result.learningContext={source:'owner_approved_lessons',timing:'loaded_before_execution',scope:'matching_step_type_only',lessonsConsulted:approvedLessons.map(x=>({id:x.id,lesson:String(x.lesson||'').slice(0,1200),confidence:Number(x.confidence||0)})),count:approvedLessons.length,applied:result.lessonUses||[],note:'Lessons are fallible owner-approved experience. They inform bounded operational safeguards; they never override user instructions or establish factual truth.'};

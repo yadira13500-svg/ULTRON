@@ -27,7 +27,8 @@ export default async function(req,res) {
       if (!run) return res.status(404).json({error:'Agent run not found.'});
       const steps = (await db.query('SELECT id,position,step_type,title,input,depends_on,status,result,error,attempts,started_at,completed_at FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 ORDER BY position',[id,owner])).rows;
       const specialistTasks = (await db.query('SELECT id,step_id,phase,specialist_role,capabilities,context_snapshot,status,attempts,lease_until,output,verification,error,created_at,updated_at,completed_at FROM ultron_specialist_tasks WHERE run_id=$1 AND owner_id=$2 ORDER BY created_at,phase',[id,owner])).rows;
-      return res.json({run,steps,specialistTasks});
+      const specialistRevisions = (await db.query('SELECT id,step_id,revision_no,specialist_role,revision_instruction,input_snapshot,prior_output,prior_verification,revised_output,revised_verification,status,error,created_at,completed_at FROM ultron_specialist_revisions WHERE run_id=$1 AND owner_id=$2 ORDER BY created_at,revision_no',[id,owner])).rows;
+      return res.json({run,steps,specialistTasks,specialistRevisions});
     }
     const runs = (await db.query('SELECT id,title,objective,status,result,error,attempts,created_at,updated_at,completed_at FROM ultron_agent_runs WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 40',[owner])).rows;
     return res.json({runs});
