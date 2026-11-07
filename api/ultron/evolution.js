@@ -40,8 +40,9 @@ export default async function(req,res){
    const stepType=String(b.step_type||'').trim();
    if(!/^[a-z_]{2,80}$/.test(stepType))return res.status(400).json({error:'A valid mission step type is required.'});
    if(b.enabled===false){const removed=await db.query('DELETE FROM ultron_strategy_policies WHERE owner_id=$1 AND step_type=$2 RETURNING step_type',[owner,stepType]);return res.json({ok:true,active:false,stepType,removed:removed.rowCount>0,note:'The preferred strategy was cleared. ULTRON will return to its normal approved-lesson selection for future missions.'});}
-   if(b.enabled!==true||!b.lesson_id)return res.status(400).json({error:'Explicit approval and an approved lesson ID are required.'});
-   const lesson=(await db.query("SELECT id,lesson,evidence,confidence,status FROM ultron_agent_lessons WHERE id=$1 AND owner_id=$2 AND status='approved' AND evidence->>'stepType'=$3",[String(b.lesson_id),owner,stepType])).rows[0];
+   const lessonId=String(b.lesson_id||'');
+   if(b.enabled!==true||! /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lessonId))return res.status(400).json({error:'Explicit approval and a valid lesson ID are required.'});
+   const lesson=(await db.query("SELECT id,lesson,evidence,confidence,status FROM ultron_agent_lessons WHERE id=$1 AND owner_id=$2 AND status='approved' AND evidence->>'stepType'=$3",[lessonId,owner,stepType])).rows[0];
    if(!lesson)return res.status(404).json({error:'That owner-approved lesson was not found for this mission step type.'});
    const history=(await db.query("SELECT context_snapshot FROM ultron_specialist_tasks WHERE owner_id=$1 AND phase='execution' ORDER BY updated_at DESC LIMIT 500",[owner])).rows;
    const observations=history.flatMap(row=>Array.isArray(row.context_snapshot?.lessonObservations)?row.context_snapshot.lessonObservations:[]);
