@@ -1,6 +1,7 @@
 import { checkSourceFreshness } from 'lib/source-check.js';
 import { searchPublicWeb } from 'lib/search.js';
 import { extractResearchQuery, planMission } from 'lib/mission-plan.js';
+import { evaluateMissionPlanner } from 'lib/mission-plan-evaluation.js';
 import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, shouldRecoverRunningStep, isMissionActive, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
 import { verifyStepResult, buildRevisionRequest, verifyClaimPassageAnchors } from 'lib/specialist-verifier.js';
 import { validateMissionGraph, buildMissionCoordinationReport } from 'lib/mission-coordinator.js';
@@ -461,6 +462,7 @@ export default async function (req, res) {
   const results = [];
   for (const [name, url] of Object.entries(CHECKS)) results.push(await probe(name, url));
   results.push(testMissionPlanningRegression());
+  results.push({name:'balanced_mission_planner_evaluation',...evaluateMissionPlanner(),semantic:true});
   results.push(testMissionCoordinationReview());
   results.push(testMissionIntelligenceAdjudication());
   results.push(testAutonomousEvidenceRepairPlanning());
