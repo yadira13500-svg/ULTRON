@@ -152,4 +152,11 @@ Turn the current single-runner workflow into a coordinated team of bounded speci
 - Added a balanced, deterministic mission-planner evaluation set covering multi-dimension research, claim checks with and without supplied sources, capture-before-assessment dependencies, research-plus-task dependencies, source-before-knowledge-write ordering, unsafe HTTP/private-network URL rejection, consequential-action exclusion, ambiguity handling and dependency-graph validity.
 - The evaluation is integrated into the scheduled self-test and reports each fixture independently. It uses no paid model calls, does not create missions or write owner data, and treats planning quality separately from execution success and factual accuracy.
 
+## Failure-safe mission recovery hardening (v245)
+- Recovery now distinguishes the execution specialist lease from the verifier task state. A pending verifier is not treated as evidence that the executing specialist has stopped; an unexpired execution lease always protects its running step.
+- Expired execution leases are first reset to pending, then only pending execution tasks can be claimed. A still-running execution task cannot be reclaimed merely because the mission-level lease expired.
+- If a recovered runner finds any other specialist still holding a valid execution lease, it renews the mission lease past that specialist's lease and exits without starting another batch. This prevents overlapping runner batches from racing to finalize the same mission.
+- The finalizer now counts running steps explicitly and refuses to complete a mission while any step remains running. Completed step rows are still committed only through a conditional running-to-completed update, and persisted task/knowledge writes retain their per-step idempotency keys and read-back verification.
+- Regression coverage distinguishes expired execution, active execution, pending verification while execution remains active, stale running steps and completed steps. This is lease coordination and operation-level replay protection; external non-idempotent actions remain approval-gated and require their own provider-specific idempotency guarantees.
+
 This document records the live bounded-specialist implementation and explicitly distinguishes it from fully autonomous, model-backed specialist agents.

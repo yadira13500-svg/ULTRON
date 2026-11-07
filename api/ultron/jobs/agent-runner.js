@@ -279,7 +279,12 @@ export default async function(req,res) {
   }
   if(!run) return res.json({ok:true,processed:false,note:'No eligible agent run was found.'});
   await db.query("UPDATE ultron_specialist_tasks SET status='pending',lease_until=NULL,error='Recovered after specialist lease expiry.',updated_at=now() WHERE run_id=$1 AND owner_id=$2 AND status='running' AND lease_until<now()",[run.id,run.owner_id]);
-  const runningSteps=(await db.query("SELECT s.id,s.status,s.started_at,EXISTS(SELECT 1 FROM ultron_specialist_tasks t WHERE t.run_id=s.run_id AND t.owner_id=s.owner_id AND t.step_id=s.id AND t.phase IN ('execution','verification') AND t.status='pending') AS has_pending_specialist_task FROM ultron_agent_steps s WHERE s.run_id=$1 AND s.owner_id=$2 AND s.status='running'",[run.id,run.owner_id])).rows;
+  const activeSpecialists=(await db.query("SELECT MAX(lease_until) AS latest_lease FROM ultron_specialist_tasks WHERE run_id=$1 AND owner_id=$2 AND phase='execution' AND status='running' AND lease_until>now()",[run.id,run.owner_id])).rows[0];
+  if(activeSpecialists?.latest_lease) {
+    await db.query("UPDATE ultron_agent_runs SET lease_until=GREATEST($3::timestamptz,now())+interval '1 minute',updated_at=now() WHERE id=$1 AND owner_id=$2 AND status='running'",[run.id,run.owner_id,activeSpecialists.latest_lease]);
+    return res.json({ok:true,processed:false,runId:run.id,status:'running',waitingForActiveSpecialists:true,note:'A prior specialist still holds a valid execution lease. ULTRON preserved its running step and will resume only after that lease expires or the specialist completes.'});
+  }
+  const runningSteps=(await db.query("SELECT s.id,s.status,s.started_at,EXISTS(SELECT 1 FROM ultron_specialist_tasks t WHERE t.run_id=s.run_id AND t.owner_id=s.owner_id AND t.step_id=s.id AND t.phase='execution' AND t.status='pending') AS has_pending_execution_task,EXISTS(SELECT 1 FROM ultron_specialist_tasks t WHERE t.run_id=s.run_id AND t.owner_id=s.owner_id AND t.step_id=s.id AND t.phase='execution' AND t.status='running' AND t.lease_until>now()) AS has_active_execution_task FROM ultron_agent_steps s WHERE s.run_id=$1 AND s.owner_id=$2 AND s.status='running'",[run.id,run.owner_id])).rows;
   for(const candidate of runningSteps) if(shouldRecoverRunningStep(candidate)) await db.query("UPDATE ultron_agent_steps SET status='pending',started_at=NULL WHERE id=$1 AND owner_id=$2 AND status='running'",[candidate.id,run.owner_id]);
   const steps=(await db.query("SELECT id,position,step_type,title,input,depends_on FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND status='pending' ORDER BY position LIMIT 3",[run.id,run.owner_id])).rows;
   const outcomes=await runParallel(steps,async step=>{
@@ -295,7 +300,7 @@ export default async function(req,res) {
     const role=specialistRoleForStep(step.step_type);
     await db.query("INSERT INTO ultron_specialist_tasks(owner_id,run_id,step_id,phase,specialist_role,capabilities,context_snapshot,status) VALUES($1,$2,$3,'execution',$4,$5::jsonb,$6::jsonb,'pending') ON CONFLICT(owner_id,step_id,phase) DO NOTHING",[run.owner_id,run.id,step.id,role,JSON.stringify(specialistCapabilitiesForRole(role)),JSON.stringify({position:step.position,stepType:step.step_type,title:step.title,input:step.input||{},depends_on:step.depends_on||[]})]);
     await db.query("INSERT INTO ultron_specialist_tasks(owner_id,run_id,step_id,phase,specialist_role,capabilities,context_snapshot,status) VALUES($1,$2,$3,'verification','verifier',$4::jsonb,$5::jsonb,'pending') ON CONFLICT(owner_id,step_id,phase) DO NOTHING",[run.owner_id,run.id,step.id,JSON.stringify(specialistCapabilitiesForRole('verifier')),JSON.stringify({position:step.position,targetStepId:step.id,targetRole:role,verificationContract:'independent_operation_evidence_review'})]);
-    const executionTask=(await db.query("UPDATE ultron_specialist_tasks SET status='running',attempts=attempts+1,lease_until=now()+interval '10 minutes',error='',updated_at=now() WHERE owner_id=$1 AND step_id=$2 AND phase='execution' AND status IN ('pending','running') RETURNING id,context_snapshot",[run.owner_id,step.id])).rows[0];
+    const executionTask=(await db.query("UPDATE ultron_specialist_tasks SET status='running',attempts=attempts+1,lease_until=now()+interval '10 minutes',error='',updated_at=now() WHERE owner_id=$1 AND step_id=$2 AND phase='execution' AND status='pending' RETURNING id,context_snapshot",[run.owner_id,step.id])).rows[0];
     if(!executionTask){await db.query("UPDATE ultron_agent_steps SET status='pending',started_at=NULL WHERE id=$1 AND owner_id=$2 AND status='running'",[step.id,run.owner_id]);return {kind:'skipped',step,note:'Specialist execution task was not claimable.'};}
     let approvedLessons=[];
     let effectiveLessons=[];
@@ -400,7 +405,7 @@ export default async function(req,res) {
   const current=(await db.query("SELECT status FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
   if(current?.status==='cancelled') return res.json({ok:true,runId:run.id,status:'cancelled',completedSteps:completed});
   if(current?.status==='failed') return res.json({ok:false,runId:run.id,status:'failed',completedSteps:completed,failedSteps:failed});
-  const counts=(await db.query("SELECT COUNT(*) FILTER (WHERE status='pending')::int AS pending,COUNT(*) FILTER (WHERE status='failed')::int AS failed,COUNT(*) FILTER (WHERE status='completed')::int AS completed,COUNT(*) FILTER (WHERE status='completed' AND (COALESCE((result->>'operationVerified')::boolean,false)=true OR COALESCE((result->>'verified')::boolean,false)=true))::int AS verified FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
+  const counts=(await db.query("SELECT COUNT(*) FILTER (WHERE status='pending')::int AS pending,COUNT(*) FILTER (WHERE status='running')::int AS running,COUNT(*) FILTER (WHERE status='failed')::int AS failed,COUNT(*) FILTER (WHERE status='completed')::int AS completed,COUNT(*) FILTER (WHERE status='completed' AND (COALESCE((result->>'operationVerified')::boolean,false)=true OR COALESCE((result->>'verified')::boolean,false)=true))::int AS verified FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
   const lessonSteps=(await db.query("SELECT id,position,step_type,title,status,result,error FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND status='failed' ORDER BY position",[run.id,run.owner_id])).rows;
   for(const item of lessonSteps) {
     const isFailure=item.status==='failed';
@@ -410,6 +415,10 @@ export default async function(req,res) {
     const evidence={runId:run.id,stepId:item.id,position:item.position,stepType:item.step_type,status:item.status,operationVerified:!isFailure,verified:!!((item.result||{}).verified),factualAccuracyVerified:false,error:isFailure?String(item.error||'').slice(0,500):'',resultType:String((item.result||{}).verificationType||'')};
     const lessonKey=(isFailure?'failure:':'success:')+String(item.step_type);
     await db.query("INSERT INTO ultron_agent_lessons(owner_id,lesson_key,lesson,evidence,confidence,status) VALUES($1,$2,$3,$4::jsonb,$5,'candidate') ON CONFLICT(owner_id,lesson_key) DO UPDATE SET lesson=EXCLUDED.lesson,evidence=EXCLUDED.evidence,confidence=GREATEST(ultron_agent_lessons.confidence,EXCLUDED.confidence) WHERE ultron_agent_lessons.status='candidate'",[run.owner_id,lessonKey,lesson,JSON.stringify(evidence),isFailure?0.65:0.55]);
+  }
+  if(counts.running>0) {
+    await db.query("UPDATE ultron_agent_runs SET lease_until=now()+interval '2 minutes',updated_at=now() WHERE id=$1 AND owner_id=$2 AND status='running'",[run.id,run.owner_id]);
+    return res.json({ok:true,runId:run.id,status:'running',completedSteps:completed,runningSteps:counts.running,note:'ULTRON is waiting for already-claimed specialists; a mission cannot finalize while any step remains running.'});
   }
   if(counts.pending===0&&counts.failed===0) {
     if(counts.completed===0) {

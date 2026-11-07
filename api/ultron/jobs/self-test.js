@@ -260,12 +260,13 @@ function testSpecialistLeaseBoundaryRecovery() {
   const now=Date.now();
   const recent=new Date(now-8*60*1000).toISOString();
   const stale=new Date(now-11*60*1000).toISOString();
-  const expiredLease=shouldRecoverRunningStep({status:'running',started_at:recent,has_pending_specialist_task:true},now);
-  const activeLease=shouldRecoverRunningStep({status:'running',started_at:recent,has_pending_specialist_task:false},now);
-  const staleStep=shouldRecoverRunningStep({status:'running',started_at:stale,has_pending_specialist_task:false},now);
-  const completed=shouldRecoverRunningStep({status:'completed',started_at:stale,has_pending_specialist_task:true},now);
-  const ok=expiredLease&&!activeLease&&staleStep&&!completed;
-  return {name:'specialist_lease_boundary_recovery',ok,semantic:ok,detail:ok?'An expired specialist task requeues its still-recent running step; active tasks are preserved; stale steps recover; completed steps never reopen.':'Lease-boundary recovery policy regressed.',expiredLeaseRecoversStep:expiredLease,activeTaskPreservesStep:!activeLease,staleStepRecovers:staleStep,completedStepPreserved:!completed};
+  const expiredLease=shouldRecoverRunningStep({status:'running',started_at:recent,has_pending_execution_task:true},now);
+  const activeLease=shouldRecoverRunningStep({status:'running',started_at:recent,has_pending_execution_task:false,has_active_execution_task:true},now);
+  const pendingVerifier=shouldRecoverRunningStep({status:'running',started_at:recent,has_pending_execution_task:false,has_active_execution_task:true,has_pending_specialist_task:true},now);
+  const staleStep=shouldRecoverRunningStep({status:'running',started_at:stale,has_pending_execution_task:false,has_active_execution_task:false},now);
+  const completed=shouldRecoverRunningStep({status:'completed',started_at:stale,has_pending_execution_task:true},now);
+  const ok=expiredLease&&!activeLease&&!pendingVerifier&&staleStep&&!completed;
+  return {name:'specialist_lease_boundary_recovery',ok,semantic:ok,detail:ok?'Only an expired or stale execution is requeued; a live execution lease protects its step even when verification is pending; completed steps never reopen.':'Lease-boundary recovery policy regressed.',expiredExecutionRecoversStep:expiredLease,activeExecutionPreservesStep:!activeLease,pendingVerifierDoesNotStealActiveStep:!pendingVerifier,staleStepRecovers:staleStep,completedStepPreserved:!completed};
 }
 
 async function testParallelExecution() {
