@@ -334,7 +334,7 @@ function testContextAwareClaimScope() {
   ];
   const attributed=analyzeClaimEvidence(claim,[sources[0]]).perSource[0];
   const unrelated=analyzeClaimEvidence('The project is complete.',[sources[1]]).perSource[0];
-  const ok=attributed.stance==='related_unclear'&&attributed.materialAtomChecks.scope.attributed===true&&attributed.materialAtomChecks.scope.contextIncludedPreviousSentence===true&&attributed.contextExcerpt.includes('The company spokesperson said:')&&unrelated.materialAtomChecks.scope.attributed===true&&unrelated.stance==='related_unclear';
+  const ok=attributed.stance==='related_unclear'&&attributed.materialAtomChecks.scope.attributed===true&&attributed.materialAtomChecks.scope.contextIncludedPreviousSentence===true&&attributed.contextExcerpt.includes('The company spokesperson said this.')&&unrelated.materialAtomChecks.scope.attributed===true&&unrelated.stance==='related_unclear';
   return {name:'context_aware_attribution_scope',ok,semantic:ok,attributionCarriedAcrossSentence:attributed.materialAtomChecks.scope.attributed,previousSentenceIncluded:attributed.materialAtomChecks.scope.contextIncludedPreviousSentence,exactQuotePreserved:attributed.exactQuote==='The regulator approved the medicine.',detail:ok?'The preceding speaker sentence is included in scope review while the selected evidence quote remains independently anchored.':'Neighboring attribution context was missed or the exact selected quote was not preserved.'};
 }
 
