@@ -75,7 +75,7 @@ async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia')
       if (toolsRan.length) {
         if (!nudgedAfterTools) {
           nudgedAfterTools = true;
-          convo.push({ role: 'user', content: 'Confirm to the user in one short, plain sentence what you just did.' });
+          convo.push({ role: 'user', content: 'Now reply to the user in plain sentences: confirm what you just did and also answer every other part of their request (use getDateTime for any date or time question).' });
           continue;
         }
         return { text: 'Done. I completed that for you (' + [...new Set(toolsRan)].join(', ') + '). Check your lists to confirm.', usage: null, steps: step };
@@ -368,7 +368,12 @@ export default async function (req, res) {
       inputSchema: { type: 'object', properties: { timezone: { type: 'string' } } },
       execute: async (args) => {
         const tz = String((args && args.timezone) || settings.timezone || 'UTC');
-        try { const now = new Date(); return { timezone: tz, local: new Intl.DateTimeFormat('en-GB', { timeZone: tz, dateStyle: 'full', timeStyle: 'long' }).format(now), iso_utc: now.toISOString() }; }
+        try {
+          const now = new Date();
+          const day = 86400000;
+          const f = d => new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(d);
+          return { timezone: tz, local: new Intl.DateTimeFormat('en-GB', { timeZone: tz, dateStyle: 'full', timeStyle: 'long' }).format(now), iso_utc: now.toISOString(), today: f(now), tomorrow: f(new Date(now.getTime() + day)), day_after_tomorrow: f(new Date(now.getTime() + 2 * day)), next_7_days: [1, 2, 3, 4, 5, 6, 7].map(n => f(new Date(now.getTime() + n * day))), note: 'Use these exact dates for today, tomorrow and weekday names; do not calculate dates yourself.' };
+        }
         catch { return { error: 'Unknown timezone.' }; }
       }
     },
