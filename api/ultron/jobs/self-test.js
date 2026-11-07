@@ -1,7 +1,7 @@
 import { checkSourceFreshness } from 'lib/source-check.js';
 import { searchPublicWeb } from 'lib/search.js';
 import { extractResearchQuery, planMission } from 'lib/mission-plan.js';
-import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
+import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
 import { verifyStepResult } from 'lib/specialist-verifier.js';
 import { analyzeSentence, sourceIndependence } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
@@ -81,6 +81,17 @@ function testMissionRuntimePolicies() {
   return {name:'mission_runtime_dependency_retry_and_roles',ok,semantic:ok,detail:ok?'Dependency gating, status-only transient retry, permanent-failure handling and role routing passed.':'A dependency, retry, permanent-failure or specialist-role policy regressed.',statusOnlyRetry:statusOnly.retry,permanentFailureNotRetried:!permanent.retry,maxParallel:MAX_SPECIALIST_CONCURRENCY};
 }
 
+function testMissionGraphPolicy() {
+  const graph=[{position:1,depends_on:[]},{position:2,depends_on:[]},{position:3,depends_on:[1,2]}];
+  const valid=graph.every((node,i)=>node.position===i+1&&new Set(node.depends_on).size===node.depends_on.length&&node.depends_on.every(dep=>Number.isInteger(dep)&&dep>0&&dep<node.position));
+  const independent=graph.filter(node=>node.depends_on.length===0).length;
+  const blocked=!dependenciesSatisfied(graph[2].depends_on,[{position:1,status:'completed'},{position:2,status:'pending'}]);
+  const ready=dependenciesSatisfied(graph[2].depends_on,[{position:1,status:'completed'},{position:2,status:'completed'}]);
+  const coordinator=specialistCapabilitiesForRole('coordinator');
+  const ok=valid&&independent===2&&blocked&&ready&&coordinator.includes('mission_decomposition')&&coordinator.includes('dependency_management');
+  return {name:'mission_graph_and_coordinator_policy',ok,semantic:ok,detail:ok?'Acyclic earlier-step dependencies, independent branch readiness and coordinator capability boundaries passed.':'Mission graph validation or coordinator capability policy regressed.',nodeCount:graph.length,independentBranches:independent};
+}
+
 async function testParallelExecution() {
   let active=0,maxActive=0;
   const results=await runParallel([1,2,3,4,5],async value=>{active++;maxActive=Math.max(maxActive,active);await Promise.resolve();active--;return value*2;},MAX_SPECIALIST_CONCURRENCY);
@@ -140,6 +151,7 @@ export default async function (req, res) {
   for (const [name, url] of Object.entries(CHECKS)) results.push(await probe(name, url));
   results.push(testMissionPlanningRegression());
   results.push(testMissionRuntimePolicies());
+  results.push(testMissionGraphPolicy());
   results.push(await testParallelExecution());
   results.push(await testIndependentVerifier());
   results.push(testGeneralOutcomeVerification());
