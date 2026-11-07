@@ -101,6 +101,7 @@ export default async function(req,res) {
 
   const body=req.body||{}, id=String(body.id||''), action=String(body.action||'');
   if (!id || !['cancel','retry','propose_replan','approve_replan'].includes(action)) return res.status(400).json({error:'Provide a run id and a supported mission action.'});
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))return res.status(400).json({error:'A valid mission ID is required.'});
   if(action==='propose_replan'){
     const run=(await db.query("SELECT id,status,plan,plan_version FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[id,owner])).rows[0];
     if(!run)return res.status(404).json({error:'Mission not found.'});
@@ -116,6 +117,7 @@ export default async function(req,res) {
   }
   if(action==='approve_replan'){
     const revisionId=String(body.revisionId||'');
+    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(revisionId))return res.status(400).json({error:'A valid revision ID is required.'});
     const revision=(await db.query("SELECT * FROM ultron_mission_revisions WHERE id=$1 AND run_id=$2 AND owner_id=$3",[revisionId,id,owner])).rows[0];
     if(!revision)return res.status(404).json({error:'Mission revision not found.'});
     if(revision.status!=='ready_for_owner_approval'||revision.verifier?.passed!==true)return res.status(409).json({error:'This revision is not independently verified and ready for owner approval.'});
