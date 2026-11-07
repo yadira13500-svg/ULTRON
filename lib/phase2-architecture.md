@@ -1,14 +1,14 @@
 # ULTRON Phase 2 — Multi-Agent Intelligence & Delegation
-Status: bounded specialist execution activated in v181; v184 hardened transient HTTP retry classification, v185 exposed the durable specialist ledger, and v187 added plan-preview/live mission dependency graph views plus coordinator graph-policy regression coverage. Full Phase 1 acceptance remains open until the physical iPhone workflow checklist and remaining replay/learning evaluations are completed.
+Status: bounded specialist execution activated in v181; v184 hardened transient HTTP retry classification, v185 exposed the durable specialist ledger, v187 added mission dependency graphs, and v190 added bounded specialist revision history and independent re-verification. Full Phase 1 acceptance remains open until the physical iPhone workflow checklist and remaining replay/learning evaluations are completed.
 
 ## Mission
 Turn the current single-runner workflow into a coordinated team of bounded specialist agents. ULTRON remains the mission owner: it decomposes work, assigns specialists, shares only the context each task needs, reconciles results, and verifies the final outcome.
 
-## Current baseline (v187)
+## Current baseline (v190)
 - One durable mission queue and scheduler-driven runner; seven operation types remain supported: research_search, verify_url, retrieve_source, assess_claim, save_learning, create_task, skill_apply.
 - Independent ready steps now execute concurrently with a hard ceiling of three workers. Dependency checks still gate downstream steps; atomic pending-to-running claims prevent two workers from claiming the same step.
 - Transient HTTP 408/425/429/5xx status-only errors are classified for bounded retries; permanent 4xx failures are not retried. v184 added regression assertions for both paths.
-- The mission inspector displays durable execution/verifier task roles, phases, statuses, attempts, verification decisions, challenge checks, errors and bounded outputs (v185). v187 adds dependency-aware graph views to plan previews and live mission inspection, showing step ownership, status and prerequisite positions.
+- The mission inspector displays durable execution/verifier task roles, phases, statuses, attempts, verification decisions, challenge checks, errors and bounded outputs (v185). v187 added dependency-aware graph views to plan previews and live mission inspection. v190 adds an append-only revision ledger with original/revised input and output, verifier challenges, outcomes and errors.
 - Run and specialist leases are ten minutes. Expired execution/verifier tasks and stale running steps return to pending for recovery. Transient failures use bounded retries; permanent failures remain failed. Cancellation marks queued/running steps and specialist tasks skipped.
 - Task, knowledge and skill-application writes use per-step idempotency identities and read-back checks. Skill applications have a unique `agent_step_id` (migration 017).
 - Migration 018 adds `ultron_specialist_tasks`: each mission step has a durable execution task and a separate verifier task with role, capability allowlist, input-context snapshot, status, attempts, lease, output, verification and error fields.
@@ -17,7 +17,7 @@ Turn the current single-runner workflow into a coordinated team of bounded speci
 - Owner-approved lessons are loaded before matching step execution; prior 403 retrieval failures can block an unchanged retry. Candidate lessons remain reviewable and are not automatically promoted.
 - Natural-language planning remains deterministic and free of model calls. The compound “research and compare” regression passes.
 - Claim analysis checks support/contradiction candidates, polarity, numbers, source grouping, freshness and provenance. These are heuristic screens, not semantic entailment or proof of truth; human review remains mandatory.
-- Daily self-tests cover free-service availability, planning, dependency gating, coordinator graph invariants, status-only transient retry versus permanent-failure handling, parallel worker overlap, seeded verifier rejection, outcome criteria, contradiction signals, source grouping and redirect safety. The v187 run passed all thirteen checks.
+- Daily self-tests cover free-service availability, planning, dependency gating, coordinator graph invariants, bounded specialist revision eligibility and budget, status-only transient retry versus permanent-failure handling, parallel worker overlap, seeded verifier rejection, outcome criteria, contradiction signals, source grouping and redirect safety. The v190 run passed all fourteen checks.
 - Live integration test: three independent research specialists completed concurrently; each has a separate completed verifier record. A seeded empty-result specialist was correctly rejected rather than silently marked successful.
 - Fault injection: a failed third step retried successfully while the first two completed steps stayed at one attempt. An expired run/step/specialist lease was recovered; only the interrupted third step reran. Cancellation changed queued execution and verifier tasks to skipped.
 - Duplicate-side-effect replay test: after creating one task and one knowledge record, both steps were fault-injected into expired-running state and recovered. Each replay read the original record (`idempotentReplay=true`); database read-back confirmed exactly one record per step. Temporary test-owner records were deleted after verification. Skill-application writes have the same unique step identity and read-back logic but still need their own replay fixture.
@@ -53,7 +53,7 @@ Turn the current single-runner workflow into a coordinated team of bounded speci
 - Context snapshots, capability allowlists, attempts, leases, output, verifier findings and errors are persisted in the specialist audit ledger.
 - The deterministic verifier rejects seeded empty/malformed research output and independently reads back persisted task, knowledge, skill-application and claim-review records. Semantic challenges (unsupported claim, citation sufficiency and incorrect calculations) remain future work.
 - Recovery resumes expired leases; the injected retry test proved completed steps were not repeated, and cancellation stopped queued execution/verifier tasks.
-- The mission inspector exposes the specialist audit ledger and dependency graph. Live progress visualization and richer revision-loop controls remain future work.
+- The mission inspector exposes the specialist audit ledger, dependency graph and revision history with original-versus-revised evidence comparison. The current revision loop is intentionally narrow: one deterministic query revision for a rejected research_search step only, followed by a fresh independent verifier pass. It does not revise write operations or call paid/model-backed agents. General semantic revision strategies, live progress visualization and broader specialist revision controls remain future work.
 - Physical iPhone end-to-end acceptance remains required. The current worker path uses deterministic free specialist logic, not paid LLM agents.
 
 ## Remaining Phase 1 closure requirements
@@ -69,7 +69,7 @@ Turn the current single-runner workflow into a coordinated team of bounded speci
 1. Add labeled evaluation fixtures for claim support, contradiction, citations, source independence and arithmetic errors.
 2. Test idempotent replay for each persisted side-effect type and measure approved-learning usefulness across repeated tasks.
 3. Extend the graph UI with live progress transitions, evidence links, verifier challenge navigation and recovery status.
-4. Add specialist revision loops: verifier rejects, producer revises within budget, verifier rechecks; cap attempts and preserve all versions.
+4. Expand revision loops only after labeled evaluations: add safe operation-specific strategies, producer correction, independent re-verification, strict budgets and preserved versions. Current v190 research-only bounded cycle is the first safe implementation.
 5. Complete physical iPhone Safari acceptance and record device/browser evidence.
 6. Only after those gates, evaluate separate model-backed specialist agents, with free-mode routing and explicit approval before any paid provider use.
 
