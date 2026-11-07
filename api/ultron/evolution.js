@@ -1,5 +1,5 @@
 import { db } from 'hatchable';
-import { summarizeLessonEffectiveness, summarizeLessonExperiment, recommendLessonStrategies } from 'lib/learning-evaluation.js';
+import { summarizeLessonEffectiveness, summarizeLessonExperiment, recommendLessonStrategies, summarizeStrategyTrialOutcomes } from 'lib/learning-evaluation.js';
 export const access = 'admin';
 export const methods = ['GET','POST','PUT','DELETE'];
 const domains=['science','coding','business','world affairs','education'];
@@ -23,11 +23,16 @@ export default async function(req,res){
   const lessonObservations=specialistHistory.rows.flatMap(row=>Array.isArray(row.context_snapshot?.lessonObservations)?row.context_snapshot.lessonObservations:[]);
   const learningEffectiveness=summarizeLessonEffectiveness(lessonObservations);
   const strategyRecommendations=recommendLessonStrategies(l.rows,lessonObservations,5);
-  const activeStrategyPolicies=(await db.query('SELECT step_type,lesson_id,active,approved_at,updated_at FROM ultron_strategy_policies WHERE owner_id=$1 AND active=true ORDER BY step_type',[owner])).rows;
+  const activeStrategyPolicies=(await db.query('SELECT step_type,lesson_id,policy_version,active,approved_at,updated_at FROM ultron_strategy_policies WHERE owner_id=$1 AND active=true ORDER BY step_type',[owner])).rows;
+  const strategyTrialRows=(await db.query('SELECT policy_version,lesson_id,step_type,run_id,step_id,attempt,outcome,verifier_passed,observed_at FROM ultron_strategy_trials WHERE owner_id=$1 ORDER BY observed_at DESC LIMIT 1000',[owner])).rows;
+  const policySnapshots=specialistHistory.rows.map(row=>row.context_snapshot?.strategyPolicy).filter(x=>x?.enabled===true&&x.policyVersion);
+  const strategyTrialVersions=new Map();
+  for(const policy of [...policySnapshots,...activeStrategyPolicies]) if(policy?.policyVersion||policy?.policy_version){const version=String(policy.policyVersion||policy.policy_version);if(!strategyTrialVersions.has(version))strategyTrialVersions.set(version,{policyVersion:version,lessonId:String(policy.lessonId||policy.lesson_id),stepType:String(policy.stepType||policy.step_type),approvedAt:policy.approvedAt||policy.approved_at||null,active:activeStrategyPolicies.some(x=>String(x.policy_version)===version)});}
+  const strategyTrials=[...strategyTrialVersions.values()].map(policy=>{const events=strategyTrialRows.filter(x=>String(x.policy_version)===policy.policyVersion);const baseline=lessonObservations.filter(x=>String(x.lessonId)===policy.lessonId&&String(x.stepType)===policy.stepType&&policy.approvedAt&&Date.parse(x.observedAt)<Date.parse(policy.approvedAt));return {...policy,...summarizeStrategyTrialOutcomes(events,baseline,5)};});
   const experimentConfig=(await db.query('SELECT enabled,min_per_cohort,updated_at FROM ultron_lesson_experiments WHERE owner_id=$1',[owner])).rows[0]||{enabled:false,min_per_cohort:5};
   const experimentEvents=specialistHistory.rows.flatMap(row=>Array.isArray(row.context_snapshot?.experimentObservations)?row.context_snapshot.experimentObservations:[]);
   const lessonExperimentResults=summarizeLessonExperiment(experimentEvents,experimentConfig.min_per_cohort);
-  return res.json({preferences:p.rows,nodes:n.rows,edges:e.rows,researchPlans:r.rows,feedback:f.rows,skills:s.rows,skillAssessments:assessments.rows,skillApplications:applications.rows,suggestions:g.rows,agentLessons:l.rows,claimReviews:c.rows,learningEffectiveness,strategyRecommendations,activeStrategyPolicies,lessonExperiment:{...experimentConfig,results:lessonExperimentResults},domains});
+  return res.json({preferences:p.rows,nodes:n.rows,edges:e.rows,researchPlans:r.rows,feedback:f.rows,skills:s.rows,skillAssessments:assessments.rows,skillApplications:applications.rows,suggestions:g.rows,agentLessons:l.rows,claimReviews:c.rows,learningEffectiveness,strategyRecommendations,activeStrategyPolicies,strategyTrials,lessonExperiment:{...experimentConfig,results:lessonExperimentResults},domains});
  }
  if(req.method==='POST'){
   const type=String(b.type||'');
@@ -48,7 +53,7 @@ export default async function(req,res){
    const observations=history.flatMap(row=>Array.isArray(row.context_snapshot?.lessonObservations)?row.context_snapshot.lessonObservations:[]);
    const recommendation=recommendLessonStrategies([lesson],observations,5)[0];
    if(recommendation?.recommendation!=='retain_for_human_review')return res.status(409).json({error:'This strategy does not meet the approval threshold. ULTRON requires at least five terminal observations and at least 80% independently verifier-passed operational outcomes.',recommendation});
-   const saved=(await db.query('INSERT INTO ultron_strategy_policies(owner_id,step_type,lesson_id,active) VALUES($1,$2,$3,true) ON CONFLICT(owner_id,step_type) DO UPDATE SET lesson_id=EXCLUDED.lesson_id,active=true,approved_at=now(),updated_at=now() RETURNING step_type,lesson_id,active,approved_at,updated_at',[owner,stepType,String(lesson.id)])).rows[0];
+   const saved=(await db.query('INSERT INTO ultron_strategy_policies(owner_id,step_type,lesson_id,active,policy_version) VALUES($1,$2,$3,true,gen_random_uuid()) ON CONFLICT(owner_id,step_type) DO UPDATE SET lesson_id=EXCLUDED.lesson_id,active=true,policy_version=gen_random_uuid(),approved_at=now(),updated_at=now() RETURNING step_type,lesson_id,policy_version,active,approved_at,updated_at',[owner,stepType,String(lesson.id)])).rows[0];
    return res.json({ok:true,policy:saved,note:'Strategy approved. Future matching missions will prioritize this approved lesson only; existing in-flight missions retain their saved strategy snapshot. Independent verification remains required.'});
   }
   if(type==='knowledge_sync'){

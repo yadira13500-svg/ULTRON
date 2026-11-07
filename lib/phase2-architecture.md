@@ -4,7 +4,7 @@ Status: bounded specialist execution activated in v181; v184 hardened transient 
 ## Mission
 Turn the current single-runner workflow into a coordinated team of bounded specialist agents. ULTRON remains the mission owner: it decomposes work, assigns specialists, shares only the context each task needs, reconciles results, and verifies the final outcome.
 
-## Current baseline (v207)
+## Current baseline (v209)
 - One durable mission queue and scheduler-driven runner; seven operation types remain supported: research_search, verify_url, retrieve_source, assess_claim, save_learning, create_task, skill_apply.
 - Independent ready steps now execute concurrently with a hard ceiling of three workers. Dependency checks still gate downstream steps; atomic pending-to-running claims prevent two workers from claiming the same step.
 - Transient HTTP 408/425/429/5xx status-only errors are classified for bounded retries; permanent 4xx failures are not retried. v184 added regression assertions for both paths.
@@ -73,5 +73,11 @@ Turn the current single-runner workflow into a coordinated team of bounded speci
 4. Expand revision loops only after labeled evaluations: add safe operation-specific strategies, producer correction, independent re-verification, strict budgets and preserved versions. Current v190 research-only bounded cycle is the first safe implementation.
 5. Continue physical iPhone Safari acceptance; the owner has confirmed ULTRON launches and works from the iPhone Home Screen. Record remaining device/browser evidence for refresh/session persistence, safe areas, background/return, permission flows, accessibility and network behavior.
 6. Only after those gates, evaluate separate model-backed specialist agents, with free-mode routing and explicit approval before any paid provider use.
+
+## Strategy trial and performance tracking (v209)
+- Migration 022 adds an append-only `ultron_strategy_trials` ledger keyed by owner, step, attempt and outcome. Each record preserves the exact approved policy version, lesson, operation type, mission and step IDs, attempt number, verifier outcome and observation timestamp. The ledger is deliberately not foreign-keyed to the active policy row, so clearing or replacing a policy does not erase historical trial evidence.
+- Preferred strategy policies carry a UUID `policy_version`. A new explicit approval creates a new version; in-flight execution snapshots retain the version they started with. The runner records a trial only when the selected approved lesson was actually present in the effective execution context. A retryable failure is recorded as its own attempt; later retries and final outcomes remain separate, idempotent events.
+- The Evolution Centre reports verifier-passed completion rate, retries, terminal failures and verifier rejections for each observed policy version. It compares with pre-approval lesson observations where timestamps are available, but labels the comparison descriptive only; mission difficulty, inputs and timing are not controlled. A review flag appears only after at least five trial outcomes and a verifier-passed rate below 50%. No automatic withdrawal, selection or policy mutation is permitted.
+- The strategy trial regression suite checks attempt/outcome accounting, the five-observation review threshold, baseline comparison, non-causal labeling and the no-auto-deactivation guard. Controlled lesson experiments remain off unless separately authorized. No paid model/provider calls are introduced.
 
 This document records the live bounded-specialist implementation and explicitly distinguishes it from fully autonomous, model-backed specialist agents.

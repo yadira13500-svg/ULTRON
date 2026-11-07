@@ -5,7 +5,7 @@ import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRole
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
 import { analyzeSentence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
-import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment, recommendLessonStrategies, applyApprovedStrategyPolicy } from 'lib/learning-evaluation.js';
+import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment, recommendLessonStrategies, applyApprovedStrategyPolicy, summarizeStrategyTrialOutcomes } from 'lib/learning-evaluation.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -146,6 +146,15 @@ function testAdaptiveStrategyRecommendations() {
   const policySafe=selected.length===1&&selected[0].id==='promising'&&crossType.length===0&&unchanged.length===lessons.length;
   const ok=byId.promising?.recommendation==='retain_for_human_review'&&byId.weak?.recommendation==='investigate_before_reuse'&&byId.mixed?.recommendation==='mixed_results_review'&&byId.small?.recommendation==='collect_more_evidence'&&recs.every(x=>x.automaticSelection===false&&x.automaticPromotion===false)&&byId.weak.verifierRejections===4&&policySafe;
   return {name:'adaptive_strategy_recommendations',ok,semantic:ok,detail:ok?'Evidence thresholds distinguish promising, weak, mixed and insufficient strategies; verifier rejections count against a lesson; only an explicitly approved, same-step-type strategy is selected; disabled or cross-type policies cannot alter execution.':'Strategy recommendation thresholds or human-approval boundaries regressed.',policySafe,recommendations:recs.map(x=>({lessonId:x.lessonId,recommendation:x.recommendation,observations:x.observations,verified:x.verified,verifierRejections:x.verifierRejections}))};
+}
+
+function testStrategyTrialTracking() {
+  const baseline=Array.from({length:6},(_,i)=>({outcome:i<5?'operationally_verified':'failed',verifierPassed:i<5}));
+  const trials=Array.from({length:5},(_,i)=>({outcome:i===0?'operationally_verified':i===1?'retryable_failure':i===2?'verifier_rejected':'failed',verifier_passed:i===0}));
+  const measured=summarizeStrategyTrialOutcomes(trials,baseline,5);
+  const small=summarizeStrategyTrialOutcomes(trials.slice(0,4),baseline,5);
+  const ok=measured.observations===5&&measured.verified===1&&measured.retries===1&&measured.verifierRejections===1&&measured.failures===2&&measured.baselineObservations===6&&measured.baselineOperationalSuccessRate===0.833&&measured.operationalSuccessRate===0.2&&measured.regressionFlag===true&&measured.differencePercentagePoints===-63.3&&measured.automaticDeactivation===false&&measured.causalEffectEstablished===false&&small.regressionFlag===false&&small.reviewStatus==='collecting_evidence';
+  return {name:'strategy_trial_tracking_and_regression_guard',ok,semantic:ok,detail:ok?'Trial outcomes count verifier passes, retries, failures and rejections; baseline comparison is descriptive; regression is flagged only after five observations and never disables a policy.':'Strategy trial thresholds, descriptive comparison or human-control guard regressed.',measured,smallSampleStatus:small.reviewStatus};
 }
 
 function testCancellationGuards() {
@@ -301,6 +310,7 @@ export default async function (req, res) {
   results.push(testLessonExperimentAllocation());
   results.push(testLessonExperimentMeasurement());
   results.push(testAdaptiveStrategyRecommendations());
+  results.push(testStrategyTrialTracking());
   results.push(testCancellationGuards());
   results.push(testMissionGraphPolicy());
   results.push(testSpecialistRevisionPolicy());
