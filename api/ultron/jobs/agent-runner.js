@@ -300,8 +300,9 @@ export default async function(req,res) {
     let effectiveLessons=[];
     let experimentAssignment=null;
     let verifierRejectionCount=0;
+    let strategyPolicy=null;
     try {
-      let strategyPolicy=executionTask.context_snapshot?.strategyPolicy;
+      strategyPolicy=executionTask.context_snapshot?.strategyPolicy;
       if(!strategyPolicy){
         const configuredPolicy=(await db.query("SELECT step_type,lesson_id,policy_version,approved_at FROM ultron_strategy_policies WHERE owner_id=$1 AND step_type=$2 AND active=true",[run.owner_id,step.step_type])).rows[0];
         strategyPolicy=configuredPolicy?{enabled:true,stepType:String(configuredPolicy.step_type),lessonId:String(configuredPolicy.lesson_id),policyVersion:String(configuredPolicy.policy_version),approvedAt:configuredPolicy.approved_at}:{enabled:false,stepType:String(step.step_type),lessonId:null,policyVersion:null,approvedAt:null};
