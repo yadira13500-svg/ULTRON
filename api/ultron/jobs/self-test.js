@@ -4,6 +4,7 @@ import { extractResearchQuery, planMission } from 'lib/mission-plan.js';
 import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, shouldRecoverRunningStep, isMissionActive, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
 import { validateMissionGraph, buildMissionCoordinationReport } from 'lib/mission-coordinator.js';
+import { buildAdaptiveReplan, verifyAdaptiveReplan } from 'lib/mission-replanning.js';
 import { analyzeSentence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
 import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment, recommendLessonStrategies, applyApprovedStrategyPolicy, summarizeStrategyTrialOutcomes } from 'lib/learning-evaluation.js';
@@ -69,6 +70,22 @@ async function testPublicSearch() {
   } catch(e) {
     return {name:'search',ok:false,status:0,ms:Date.now()-t0,semantic:false,error:String(e?.message||e).slice(0,160)};
   }
+}
+
+function testAdaptiveMissionReplanning() {
+  const steps=[
+    {position:1,step_type:'research_search',title:'Completed research',input:{query:'baseline'},depends_on:[],status:'completed',result:{independentVerification:{passed:true}}},
+    {position:2,step_type:'research_search',title:'Failed research',input:{query:'narrow topic'},depends_on:[1],status:'failed',error:'No useful results'},
+    {position:3,step_type:'verify_url',title:'Dependent source check',input:{url:'https://example.org/source'},depends_on:[2],status:'pending'},
+    {position:4,step_type:'research_search',title:'Independent completed branch',input:{query:'separate'},depends_on:[],status:'completed',result:{independentVerification:{passed:true}}}
+  ];
+  const proposal=buildAdaptiveReplan(steps);
+  const manual=buildAdaptiveReplan([{position:1,step_type:'retrieve_source',title:'Fetch source',input:{url:'https://example.org/a'},depends_on:[],status:'failed',error:'HTTP 403'}]);
+  const tampered=proposal.plan.map(x=>({...x}));
+  tampered[0]={...tampered[0],input:{query:'tampered completed work'}};
+  const tamperCheck=verifyAdaptiveReplan(steps,tampered,proposal.preservedPositions,proposal.resetPositions);
+  const ok=proposal.valid&&proposal.readyForOwnerApproval&&proposal.resetPositions.join(',')==='2,3'&&proposal.preservedPositions.join(',')==='1,4'&&proposal.revised.length===1&&proposal.plan[1].input.query!=='narrow topic'&&proposal.verifier.passed&&!manual.readyForOwnerApproval&&manual.manualInputRequired.length===1&&tamperCheck.passed===false&&proposal.verifier.factualAccuracyVerified===false;
+  return {name:'adaptive_mission_replanning_and_preservation',ok,semantic:ok,detail:ok?'A failed research branch receives a bounded revised query; only that branch and pending dependents reset; completed work is preserved; source URL substitutions require owner input; tampered completed work is rejected.':'Adaptive replanning changed completed work, missed dependent tasks or bypassed owner input.',resetPositions:proposal.resetPositions,preservedPositions:proposal.preservedPositions,manualInputRequired:manual.manualInputRequired,tamperedCompletedRejected:!tamperCheck.passed};
 }
 
 function testMissionCoordinationReview() {
@@ -314,6 +331,7 @@ export default async function (req, res) {
   for (const [name, url] of Object.entries(CHECKS)) results.push(await probe(name, url));
   results.push(testMissionPlanningRegression());
   results.push(testMissionCoordinationReview());
+  results.push(testAdaptiveMissionReplanning());
   results.push(testMissionRuntimePolicies());
   results.push(testSpecialistLeaseBoundaryRecovery());
   results.push(testAdaptiveLearningMeasurement());

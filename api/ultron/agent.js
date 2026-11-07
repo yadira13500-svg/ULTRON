@@ -1,6 +1,7 @@
 import { db, scheduler } from 'hatchable';
 import { specialistRoleForStep, specialistCapabilitiesForRole } from 'lib/mission-runtime.js';
 import { buildMissionCoordinationReport, validateMissionGraph } from 'lib/mission-coordinator.js';
+import { buildAdaptiveReplan } from 'lib/mission-replanning.js';
 
 export const access = 'admin';
 export const methods = ['GET','POST','PUT'];
@@ -24,13 +25,14 @@ export default async function(req,res) {
     const id = String(req.query?.id || '');
     if (id) {
       // Sourced-learning order is validated in the POST planner below.
-    const run = (await db.query('SELECT id,title,objective,status,plan,result,error,attempts,created_at,updated_at,started_at,completed_at FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2',[id,owner])).rows[0];
+    const run = (await db.query('SELECT id,title,objective,status,plan,plan_version,result,error,attempts,created_at,updated_at,started_at,completed_at FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2',[id,owner])).rows[0];
       if (!run) return res.status(404).json({error:'Agent run not found.'});
       const steps = (await db.query('SELECT id,position,step_type,title,input,depends_on,status,result,error,attempts,started_at,completed_at FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 ORDER BY position',[id,owner])).rows;
       const specialistTasks = (await db.query('SELECT id,step_id,phase,specialist_role,capabilities,context_snapshot,status,attempts,lease_until,output,verification,error,created_at,updated_at,completed_at FROM ultron_specialist_tasks WHERE run_id=$1 AND owner_id=$2 ORDER BY created_at,phase',[id,owner])).rows;
       const specialistRevisions = (await db.query('SELECT id,step_id,revision_no,specialist_role,revision_instruction,input_snapshot,prior_output,prior_verification,revised_output,revised_verification,status,error,created_at,completed_at FROM ultron_specialist_revisions WHERE run_id=$1 AND owner_id=$2 ORDER BY created_at,revision_no',[id,owner])).rows;
+      const missionRevisions=(await db.query('SELECT id,revision_no,base_plan_version,candidate_plan,affected_positions,preserved_positions,verifier,status,rationale,created_at,reviewed_at FROM ultron_mission_revisions WHERE run_id=$1 AND owner_id=$2 ORDER BY revision_no DESC',[id,owner])).rows;
       const coordination=buildMissionCoordinationReport(steps,run.result?.acceptance||null);
-      return res.json({run,steps,specialistTasks,specialistRevisions,coordination});
+      return res.json({run,steps,specialistTasks,specialistRevisions,missionRevisions,coordination});
     }
     const runs = (await db.query('SELECT id,title,objective,status,result,error,attempts,created_at,updated_at,completed_at FROM ultron_agent_runs WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 40',[owner])).rows;
     return res.json({runs});
@@ -98,7 +100,48 @@ export default async function(req,res) {
   }
 
   const body=req.body||{}, id=String(body.id||''), action=String(body.action||'');
-  if (!id || !['cancel','retry'].includes(action)) return res.status(400).json({error:'Provide a run id and cancel/retry action.'});
+  if (!id || !['cancel','retry','propose_replan','approve_replan'].includes(action)) return res.status(400).json({error:'Provide a run id and a supported mission action.'});
+  if(action==='propose_replan'){
+    const run=(await db.query("SELECT id,status,plan,plan_version FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[id,owner])).rows[0];
+    if(!run)return res.status(404).json({error:'Mission not found.'});
+    if(run.status!=='failed')return res.status(409).json({error:'Adaptive replanning is available only after a mission has failed.'});
+    const steps=(await db.query('SELECT position,step_type,title,input,depends_on,status,result,error FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 ORDER BY position',[id,owner])).rows;
+    const proposal=buildAdaptiveReplan(steps);
+    if(!proposal.valid)return res.status(409).json({error:'A safe recovery plan could not be constructed.',details:proposal.errors});
+    const revisionNo=Number((await db.query('SELECT COALESCE(MAX(revision_no),0)::int AS n FROM ultron_mission_revisions WHERE run_id=$1 AND owner_id=$2',[id,owner])).rows[0]?.n||0)+1;
+    const status=proposal.readyForOwnerApproval?'ready_for_owner_approval':'needs_owner_input';
+    const saved=(await db.query("INSERT INTO ultron_mission_revisions(owner_id,run_id,revision_no,base_plan_version,candidate_plan,affected_positions,preserved_positions,verifier,status,rationale) VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9,$10::jsonb) RETURNING id,revision_no,status,verifier,affected_positions,preserved_positions,rationale,created_at",
+      [owner,id,revisionNo,run.plan_version,JSON.stringify(proposal.plan),JSON.stringify(proposal.resetPositions),JSON.stringify(proposal.preservedPositions),JSON.stringify(proposal.verifier),status,JSON.stringify({failedRoots:proposal.failedRoots,revised:proposal.revised,manualInputRequired:proposal.manualInputRequired,note:proposal.note})])).rows[0];
+    return res.status(201).json({ok:true,revision:saved,proposal});
+  }
+  if(action==='approve_replan'){
+    const revisionId=String(body.revisionId||'');
+    const revision=(await db.query("SELECT * FROM ultron_mission_revisions WHERE id=$1 AND run_id=$2 AND owner_id=$3",[revisionId,id,owner])).rows[0];
+    if(!revision)return res.status(404).json({error:'Mission revision not found.'});
+    if(revision.status!=='ready_for_owner_approval'||revision.verifier?.passed!==true)return res.status(409).json({error:'This revision is not independently verified and ready for owner approval.'});
+    const run=(await db.query("SELECT id,status,plan,plan_version FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[id,owner])).rows[0];
+    if(!run||run.status!=='failed'||Number(run.plan_version)!==Number(revision.base_plan_version))return res.status(409).json({error:'The mission state or plan version changed. Prepare a fresh recovery plan.'});
+    const candidate=Array.isArray(revision.candidate_plan)?revision.candidate_plan:[];
+    const resetPositions=Array.isArray(revision.affected_positions)?revision.affected_positions.map(Number):[];
+    const graph=validateMissionGraph(candidate);
+    if(!graph.valid||!resetPositions.length)return res.status(409).json({error:'The saved revision no longer passes graph or recovery validation.'});
+    const currentSteps=(await db.query('SELECT position,status FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 ORDER BY position',[id,owner])).rows;
+    const currentFailed=currentSteps.some(s=>s.status==='failed');
+    if(!currentFailed)return res.status(409).json({error:'No failed branch remains to replan.'});
+    for(const position of resetPositions){
+      const next=candidate.find(x=>Number(x.position)===position);
+      if(!next)return res.status(409).json({error:'A recovery step is missing from the verified revision.'});
+      await db.query("UPDATE ultron_agent_steps SET input=$4::jsonb,status='pending',result='{}'::jsonb,error='',started_at=NULL,completed_at=NULL WHERE run_id=$1 AND owner_id=$2 AND position=$3 AND status IN ('failed','pending','skipped')",[id,owner,position,JSON.stringify(next.input||{})]);
+      await db.query("UPDATE ultron_specialist_tasks SET status='pending',output='{}'::jsonb,verification='{}'::jsonb,error='',lease_until=NULL,updated_at=now(),completed_at=NULL WHERE run_id=$1 AND owner_id=$2 AND step_id=(SELECT id FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND position=$3) AND status IN ('failed','skipped')",[id,owner,position]);
+    }
+    const nextPlan=Array.isArray(run.plan)?candidate:{...(run.plan||{}),steps:candidate};
+    const updated=await db.query("UPDATE ultron_agent_runs SET plan=$3::jsonb,plan_version=plan_version+1,status='queued',error='',lease_until=NULL,completed_at=NULL,updated_at=now() WHERE id=$1 AND owner_id=$2 AND status='failed' AND plan_version=$4 RETURNING id,plan_version",[id,owner,JSON.stringify(nextPlan),revision.base_plan_version]);
+    if(!updated.rows.length)return res.status(409).json({error:'Mission changed before the revised plan could be activated. No new execution was queued.'});
+    await db.query("UPDATE ultron_mission_revisions SET status='approved',reviewed_at=now() WHERE id=$1 AND owner_id=$2 AND status='ready_for_owner_approval'",[revisionId,owner]);
+    await db.query("UPDATE ultron_mission_revisions SET status='superseded' WHERE run_id=$1 AND owner_id=$2 AND id<>$3 AND status IN ('ready_for_owner_approval','needs_owner_input')",[id,owner,revisionId]);
+    try{await scheduler.now('/api/ultron/jobs/agent-runner',{runId:id});}catch{return res.status(202).json({ok:true,status:'queued',workerQueued:false,planVersion:updated.rows[0].plan_version,note:'Approved recovery plan is saved. The recovery worker will resume it.'});}
+    return res.status(202).json({ok:true,status:'queued',workerQueued:true,planVersion:updated.rows[0].plan_version,resetPositions,preservedPositions:revision.preserved_positions});
+  }
   if (action==='cancel') {
     const r=await db.query("UPDATE ultron_agent_runs SET status='cancelled',lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2 AND status IN ('queued','running') RETURNING id,status",[id,owner]);
     if (!r.rows.length) return res.status(409).json({error:'This run is not cancellable.'});
