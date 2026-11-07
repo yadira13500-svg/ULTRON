@@ -18,6 +18,7 @@ Turn the current single-runner workflow into a coordinated team of bounded speci
 - Daily self-tests cover free-service availability, planning, dependency gating, bounded retry policy, parallel worker overlap, seeded verifier rejection, outcome criteria, contradiction signals, source grouping and redirect safety. The current v181 run passed all eleven checks.
 - Live integration test: three independent research specialists completed concurrently; each has a separate completed verifier record. A seeded empty-result specialist was correctly rejected rather than silently marked successful.
 - Fault injection: a failed third step retried successfully while the first two completed steps stayed at one attempt. An expired run/step/specialist lease was recovered; only the interrupted third step reran. Cancellation changed queued execution and verifier tasks to skipped.
+- Duplicate-side-effect replay test: after creating one task and one knowledge record, both steps were fault-injected into expired-running state and recovered. Each replay read the original record (`idempotentReplay=true`); database read-back confirmed exactly one record per step. Temporary test-owner records were deleted after verification. Skill-application writes have the same unique step identity and read-back logic but still need their own replay fixture.
 - Physical iPhone Safari acceptance remains unverified. Broader real-world tests of claim accuracy and adaptive-learning improvement also remain open; v181 does not claim full Phase 1 acceptance.
 
 ## Target specialist roles
