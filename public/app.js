@@ -92,6 +92,24 @@ $('#visionCapture').addEventListener('click',()=>{
  $('#visionStatus').textContent='Frame captured locally. It has not been sent, stored, or analysed. Stop the camera when finished.';
 });
 $('#visionAnalyze').addEventListener('click',async()=>{if(!visionFrame)return;const ok=confirm('Send this single captured image to NVIDIA Llama 3.2 Vision now? NVIDIA trial terms may allow submitted images and outputs to be recorded to improve its services. Do not send private, confidential or sensitive surroundings. No image will be sent unless you approve this prompt.');if(!ok)return;$('#visionAnalyze').disabled=true;$('#visionStatus').textContent='Sending this one approved frame to NVIDIA for analysis…';try{const result=await req('/vision','POST',{image:visionFrame,consent:true});const answer=result.reply||'No description returned.';bubble('VISUAL AWARENESS · NVIDIA\\n'+answer,'bot');const packet=result.assessment,report=$('#sentinelAssessment');if(packet&&report){report.innerHTML='<div class="sentinel-report-head"><b>SENTINEL · REVIEW PACKET</b><span>'+esc(packet.status.replaceAll('_',' ').toUpperCase())+'</span></div><p class="tiny">'+esc(packet.classification)+' · '+esc(packet.purpose)+'</p><h4>OBSERVATION · NOT VERIFIED</h4><p>'+esc(packet.observation.text)+'</p><p class="tiny">Source: '+esc(packet.source.label)+' · '+esc(packet.source.type)+' · '+esc(packet.source.mode)+' · '+esc(packet.generatedAt)+'</p><h4>HUMAN REVIEW CHECKLIST</h4><ol>'+packet.reviewChecklist.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ol><h4>LIMITATIONS</h4><ul>'+packet.limitations.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul><p class="tiny">No original image or assessment packet is persisted by this feature. Save any material only through an approved, secure workflow.</p>';report.hidden=false;}$('#visionStatus').textContent='Analysis complete via '+(result.provider||'NVIDIA')+'. A structured review packet was prepared; camera stream remains local.';}catch(error){$('#visionStatus').textContent='Vision analysis failed: '+(error.message||'unknown error')+'. No automatic paid fallback was attempted.';}finally{$('#visionAnalyze').disabled=false;}});$('#visionStop').addEventListener('click',stopVisionCamera);
+async function loadSensorRecords(){
+ try{
+  const r=await req('/sensors'),xs=r.observations||[];
+  $('#sensorStatus').textContent='Device connections: not configured. '+(r.note||'Only authorised exports are accepted.');
+  $('#sensorRecords').innerHTML=xs.length?xs.map(x=>'<article class="sensor-record"><strong>'+esc(String(x.source_type).replaceAll('_',' ').toUpperCase())+' · '+esc(x.source_label)+'</strong><p class="tiny">Captured '+esc(x.captured_at?new Date(x.captured_at).toLocaleString():'time not supplied')+' · Saved '+esc(new Date(x.created_at).toLocaleString())+' · '+esc(String(x.review_status).replaceAll('_',' '))+'</p><p class="tiny">Structured fields: '+esc(Object.keys(x.assessment?.fields||{}).length)+' · Human review required · No device or flight control</p><pre>'+esc(JSON.stringify(x.assessment?.fields||{},null,2))+'</pre></article>').join(''):'<div class="empty">No authorised sensor or aviation exports have been imported.</div>';
+ }catch(e){$('#sensorStatus').textContent='Sensor records unavailable: '+e.message;$('#sensorRecords').innerHTML='<div class="empty">Could not load records.</div>'}
+}
+$('#sensorForm').addEventListener('submit',async e=>{
+ e.preventDefault();const b=$('#sensorSubmit');b.disabled=true;b.textContent='Validating export…';
+ try{
+  let payload;try{payload=JSON.parse($('#sensorPayload').value)}catch{throw new Error('The export must be valid JSON.')}
+  if(!payload||typeof payload!=='object'||Array.isArray(payload))throw new Error('The JSON root must be an object.');
+  const captured=$('#sensorCapturedAt').value;
+  const result=await req('/sensors','POST',{source_type:$('#sensorType').value,source_label:$('#sensorLabel').value.trim(),captured_at:captured?new Date(captured).toISOString():null,payload,consent:$('#sensorConsent').checked,source_authorization:$('#sensorConsent').checked});
+  $('#sensorPayload').value='';$('#sensorConsent').checked=false;await loadSensorRecords();toast('Authorised export structured and saved for human review.');
+ }catch(error){toast(error.message);$('#sensorStatus').textContent='Import not completed: '+error.message;}
+ finally{b.disabled=false;b.textContent='Import and structure record'}
+});
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&visionStream)stopVisionCamera()});
 window.addEventListener('pagehide',stopVisionCamera);
 
@@ -276,7 +294,7 @@ async function loadNews(){
 $('#refreshNews').addEventListener('click',loadNews);
 $('#newsCountry').addEventListener('change',loadNews);
 $('#newsCategory').addEventListener('change',loadNews);
-time();setInterval(time,30000);showLesson();Promise.all([loadItems(),loadSettings()]).then(()=>Promise.all([loadBrief(),loadActions(),loadMemories(),loadIntegrations(),loadHistory(),loadNews(),loadKnowledge(),loadEvolution(),loadAgentRuns()])).then(refreshMissionControl);
+time();setInterval(time,30000);showLesson();Promise.all([loadItems(),loadSettings()]).then(()=>Promise.all([loadBrief(),loadActions(),loadMemories(),loadIntegrations(),loadHistory(),loadNews(),loadKnowledge(),loadEvolution(),loadAgentRuns(),loadSensorRecords()])).then(refreshMissionControl);
 setInterval(()=>{if(document.visibilityState==='visible')loadNews()},15*60*1000);
 setInterval(()=>{if(document.visibilityState==='visible'&&agentRuns.some(x=>['queued','running'].includes(x.status)))loadAgentRuns()},12000);
 $('#copySiriPrefix').addEventListener('click',async()=>{const value='https://ultron-ptje.hatchable.site/#siri=';try{await navigator.clipboard.writeText(value);$('#siriStatus').textContent='Link prefix copied. Paste it into the Text action, then insert the encoded-text variable after the equals sign.'}catch{$('#siriStatus').textContent=value}});
