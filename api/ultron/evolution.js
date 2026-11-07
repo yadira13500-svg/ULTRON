@@ -127,6 +127,7 @@ export default async function(req,res){
   }
   if(type==='skill_assessment'){
    const skillId=String(b.skill_id||'');
+   if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(skillId))return res.status(400).json({error:'A valid skill ID is required.'});
    const skill=(await db.query('SELECT id,title,status,test_json,concepts_json FROM ultron_skill_modules WHERE id=$1 AND owner_id=$2',[skillId,owner])).rows[0];
    if(!skill)return res.status(404).json({error:'Skill module not found.'});
    if(skill.status!=='ready'&&skill.status!=='mastered')return res.status(409).json({error:'The source lesson must be ingested and ready before assessment.'});
@@ -150,6 +151,7 @@ export default async function(req,res){
   return res.status(400).json({error:'Unknown evolution record type.'});
  }
  if(req.method==='PUT'){
+  if(b.id&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(b.id)))return res.status(400).json({error:'A valid record ID is required.'});
   if(b.type==='preference'&&b.id){const {rows}=await db.query('UPDATE ultron_preferences SET preference=$3,confirmed=true,source=$4,updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *',[b.id,owner,String(b.preference||'').slice(0,1000),'user']);return res.json({preference:rows[0]||null});}
   if(b.type==='preference_confirm'&&b.id){const {rows}=await db.query('UPDATE ultron_preferences SET confirmed=true,source=$3,confidence=1,updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *',[b.id,owner,'user']);return res.json({preference:rows[0]||null});}
   if(b.type==='research_plan'&&b.id){const {rows}=await db.query('UPDATE ultron_research_plans SET enabled=$3,frequency=COALESCE($4,frequency),boundary=COALESCE($5,boundary),updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *',[b.id,owner,b.enabled===true,['daily','weekly','monthly'].includes(b.frequency)?b.frequency:null,typeof b.boundary==='string'?b.boundary.slice(0,1000):null]);return res.json({plan:rows[0]||null});}
@@ -203,7 +205,7 @@ export default async function(req,res){
   if(b.type==='graph_suggestion'&&b.id){const status=['approved','rejected'].includes(b.status)?b.status:null;if(!status)return res.status(400).json({error:'Choose approve or reject.'});const s=await db.query("SELECT * FROM ultron_graph_suggestions WHERE id=$1 AND owner_id=$2 AND status='pending'",[b.id,owner]);if(!s.rows[0])return res.status(404).json({error:'Pending suggestion not found.'});const item=s.rows[0];if(status==='approved'){const ev=Array.isArray(item.evidence)?item.evidence:[];const evidence=String(item.rationale+' Evidence: '+ev.map(x=>(x.source||'Source')+': '+(x.excerpt||'')).join(' | ')).slice(0,1000);const sourceUrl=ev.map(x=>x.url).filter(Boolean).join(' | ').slice(0,1000);await db.query('INSERT INTO ultron_graph_edges(owner_id,from_id,to_id,relation,evidence,source_url,confidence) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(owner_id,from_id,to_id,relation) DO UPDATE SET evidence=EXCLUDED.evidence,source_url=EXCLUDED.source_url,confidence=EXCLUDED.confidence',[owner,item.from_id,item.to_id,item.relation,evidence,sourceUrl,Math.min(0.85,Number(item.evidence_strength)||0.7)]);}const updated=await db.query('UPDATE ultron_graph_suggestions SET status=$3,reviewed_at=now() WHERE id=$1 AND owner_id=$2 RETURNING id,status,reviewed_at',[b.id,owner,status]);return res.json({suggestion:updated.rows[0],promoted:status==='approved'});}
   return res.status(400).json({error:'Unsupported update.'});
  }
- const type=String(b.type||''),id=String(b.id||'');if(!id)return res.status(400).json({error:'Record id required.'});
+ const type=String(b.type||''),id=String(b.id||'');if(!id)return res.status(400).json({error:'Record id required.'});if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))return res.status(400).json({error:'A valid record ID is required.'});
  const tables={preference:'ultron_preferences',research_plan:'ultron_research_plans',feedback:'ultron_feedback',skill:'ultron_skill_modules',node:'ultron_graph_nodes',edge:'ultron_graph_edges'};
  const table=tables[type];if(!table)return res.status(400).json({error:'Unsupported record type.'});
  const {rowCount}=await db.query('DELETE FROM '+table+' WHERE id=$1 AND owner_id=$2',[id,owner]);return res.json({ok:rowCount>0});
