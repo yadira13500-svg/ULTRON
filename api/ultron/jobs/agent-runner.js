@@ -200,7 +200,7 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
       if(!aa.size||!bb.size)return 0;let overlap=0;for(const x of aa)if(bb.has(x))overlap++;
       return Number((overlap/(aa.size+bb.size-overlap)).toFixed(3));
     };
-    const negation=new RegExp('\\b(no|not|never|neither|without|failed|declined|decreased|fell|reduced|denied|false)\\b','i');
+    const negation=new RegExp('\\b(no|not|never|neither|without|failed|declined|decreased|fell|denied|false)\\b','i');
     const contradictionCandidates=[];
     for(let i=0;i<matches.length;i++)for(let j=i+1;j<matches.length;j++){
       const a=matches[i],b=matches[j],sa=a.excerptCandidate,sb=b.excerptCandidate;
