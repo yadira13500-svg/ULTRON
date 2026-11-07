@@ -3,6 +3,7 @@ import { searchPublicWeb } from 'lib/search.js';
 import { extractResearchQuery, planMission } from 'lib/mission-plan.js';
 import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, shouldRecoverRunningStep, isMissionActive, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
+import { validateMissionGraph, buildMissionCoordinationReport } from 'lib/mission-coordinator.js';
 import { analyzeSentence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
 import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment, recommendLessonStrategies, applyApprovedStrategyPolicy, summarizeStrategyTrialOutcomes } from 'lib/learning-evaluation.js';
@@ -68,6 +69,14 @@ async function testPublicSearch() {
   } catch(e) {
     return {name:'search',ok:false,status:0,ms:Date.now()-t0,semantic:false,error:String(e?.message||e).slice(0,160)};
   }
+}
+
+function testMissionCoordinationReview() {
+  const graph=[{position:1,step_type:'research_search',depends_on:[],status:'completed',result:{results:[{url:'https://alpha.example/a'},{url:'https://beta.example/b'}],independentVerification:{passed:true}}},{position:2,step_type:'assess_claim',depends_on:[1],status:'completed',result:{deepAnalysis:{contradictions:[{reason:'Sources disagree on the reported total.',url:'https://beta.example/b'}]},independentVerification:{passed:true}}}];
+  const valid=validateMissionGraph(graph),invalid=validateMissionGraph([{position:1,depends_on:[2]},{position:2,depends_on:[]}]);
+  const report=buildMissionCoordinationReport(graph,{status:'criteria_met_pending_review',counts:{unmet:0,needs_review:1}});
+  const ok=valid.valid&&!invalid.valid&&valid.edgeCount===1&&report.execution.allIndependentChecksPassed&&report.specialistAllocation.researcher===1&&report.specialistAllocation.analyst===1&&report.evidence.uniqueSourceUrls===2&&report.evidence.distinctSourceHosts===2&&report.evidence.contradictionCandidates===1&&report.coordinatorDecision==='owner_review_required'&&report.factualAccuracyVerified===false;
+  return {name:'mission_graph_coordination_and_conflict_reconciliation',ok,semantic:ok,detail:ok?'Coordinator validates dependency graphs, reconciles specialist roles and evidence provenance, surfaces contradiction candidates, and preserves human-review boundaries.':'Mission coordination graph, role, provenance or contradiction review regressed.',graphValid:valid.valid,invalidGraphRejected:!invalid.valid,decision:report.coordinatorDecision,evidence:report.evidence};
 }
 
 function testMissionRuntimePolicies() {
@@ -304,6 +313,7 @@ export default async function (req, res) {
   const results = [];
   for (const [name, url] of Object.entries(CHECKS)) results.push(await probe(name, url));
   results.push(testMissionPlanningRegression());
+  results.push(testMissionCoordinationReview());
   results.push(testMissionRuntimePolicies());
   results.push(testSpecialistLeaseBoundaryRecovery());
   results.push(testAdaptiveLearningMeasurement());

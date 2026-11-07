@@ -4,6 +4,7 @@ import { verifyOutcome } from 'lib/outcome.js';
 import { searchPublicWeb } from 'lib/search.js';
 import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, shouldRecoverRunningStep, isMissionActive, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
+import { buildMissionCoordinationReport } from 'lib/mission-coordinator.js';
 import { createLessonObservationEvents, assignLessonExperiment, createExperimentObservationEvent, applyApprovedStrategyPolicy } from 'lib/learning-evaluation.js';
 
 export const access = 'scheduler';
@@ -420,7 +421,9 @@ export default async function(req,res) {
     const acceptanceResult=acceptanceChecks.length?verifyOutcome(acceptanceChecks,persistedSteps):{status:'not_defined',counts:{met:0,unmet:0,needs_review:0},criteria:[],note:'No structured acceptance checks were supplied.'};
     const acceptance={...acceptanceResult,count:acceptanceChecks.length,items:acceptanceChecks};
     const learningUsage=(await db.query("SELECT COUNT(DISTINCT step_id)::int AS steps_with_lessons,COUNT(DISTINCT lesson_id)::int AS distinct_lessons FROM (SELECT id AS step_id,jsonb_array_elements(COALESCE(result->'learningContext'->'lessonsConsulted','[]'::jsonb))->>'id' AS lesson_id FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND status='completed') q WHERE lesson_id IS NOT NULL",[run.id,run.owner_id])).rows[0]||{steps_with_lessons:0,distinct_lessons:0};
-    const summary={stepsCompleted:counts.completed,stepsVerified:counts.verified,verifiedWork:fullyOperationallyVerified,verificationStatus:fullyOperationallyVerified?'operationally_verified':'partial',verificationScope:'operation_checks_only',acceptance,factualAccuracyVerified:false,learning:{stepsWithApprovedLessons:learningUsage.steps_with_lessons,distinctApprovedLessonsConsulted:learningUsage.distinct_lessons},completedAt:new Date().toISOString()};
+    const coordinationSteps=(await db.query('SELECT position,step_type,title,depends_on,status,result,error FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 ORDER BY position',[run.id,run.owner_id])).rows;
+    const coordination=buildMissionCoordinationReport(coordinationSteps,acceptance);
+    const summary={stepsCompleted:counts.completed,stepsVerified:counts.verified,verifiedWork:fullyOperationallyVerified,verificationStatus:fullyOperationallyVerified?'operationally_verified':'partial',verificationScope:'operation_checks_only',acceptance,coordination,factualAccuracyVerified:false,learning:{stepsWithApprovedLessons:learningUsage.steps_with_lessons,distinctApprovedLessonsConsulted:learningUsage.distinct_lessons},completedAt:new Date().toISOString()};
     await db.query("UPDATE ultron_agent_runs SET status='completed',result=$3::jsonb,error='',lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2 AND status='running'",[run.id,run.owner_id,JSON.stringify(summary)]);
     return res.json({ok:true,runId:run.id,status:'completed',stepsCompleted:counts.completed,stepsVerified:counts.verified,verificationStatus:summary.verificationStatus,factualAccuracyVerified:false});
   }

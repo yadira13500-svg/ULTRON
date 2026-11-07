@@ -1,5 +1,6 @@
 import { db, scheduler } from 'hatchable';
 import { specialistRoleForStep, specialistCapabilitiesForRole } from 'lib/mission-runtime.js';
+import { buildMissionCoordinationReport, validateMissionGraph } from 'lib/mission-coordinator.js';
 
 export const access = 'admin';
 export const methods = ['GET','POST','PUT'];
@@ -28,7 +29,8 @@ export default async function(req,res) {
       const steps = (await db.query('SELECT id,position,step_type,title,input,depends_on,status,result,error,attempts,started_at,completed_at FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 ORDER BY position',[id,owner])).rows;
       const specialistTasks = (await db.query('SELECT id,step_id,phase,specialist_role,capabilities,context_snapshot,status,attempts,lease_until,output,verification,error,created_at,updated_at,completed_at FROM ultron_specialist_tasks WHERE run_id=$1 AND owner_id=$2 ORDER BY created_at,phase',[id,owner])).rows;
       const specialistRevisions = (await db.query('SELECT id,step_id,revision_no,specialist_role,revision_instruction,input_snapshot,prior_output,prior_verification,revised_output,revised_verification,status,error,created_at,completed_at FROM ultron_specialist_revisions WHERE run_id=$1 AND owner_id=$2 ORDER BY created_at,revision_no',[id,owner])).rows;
-      return res.json({run,steps,specialistTasks,specialistRevisions});
+      const coordination=buildMissionCoordinationReport(steps,run.result?.acceptance||null);
+      return res.json({run,steps,specialistTasks,specialistRevisions,coordination});
     }
     const runs = (await db.query('SELECT id,title,objective,status,result,error,attempts,created_at,updated_at,completed_at FROM ultron_agent_runs WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 40',[owner])).rows;
     return res.json({runs});
@@ -60,6 +62,8 @@ export default async function(req,res) {
       if(dependsOn.length>8||new Set(dependsOn).size!==dependsOn.length||dependsOn.some(n=>!Number.isInteger(n)||n<1||n>=i+1)) return res.status(400).json({error:'Step dependencies must reference unique earlier step positions only.'});
       normalized.push({position:i+1,type,title:label,input,depends_on:dependsOn});
     }
+    const graphCheck=validateMissionGraph(normalized);
+    if(!graphCheck.valid)return res.status(400).json({error:'Mission graph validation failed.',details:graphCheck.errors});
     for (let i=0;i<normalized.length;i++) { const s=normalized[i]; if(s.type==='save_learning'&&s.input.source_url&&!normalized.some((v,j)=>j<i&&v.type==='retrieve_source'&&v.input.url===s.input.source_url)) return res.status(400).json({error:'Add a retrieve_source step for the same source before saving sourced learning.'}); }
     for (let i=0;i<normalized.length;i++) { const s=normalized[i]; if(s.type==='assess_claim' && (!Array.isArray(s.input.source_urls) || !s.input.source_urls.every(url=>normalized.some((v,j)=>j<i&&v.type==='retrieve_source'&&v.input.url===url)))) return res.status(400).json({error:'Capture each exact source URL before assessing a claim.'}); }
     const acceptanceCriteria=Array.isArray(body.acceptanceCriteria)?body.acceptanceCriteria.map(x=>String(x).trim().slice(0,500)).filter(Boolean).slice(0,12):[];
