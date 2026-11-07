@@ -11,6 +11,7 @@ import { summarizeRecoveryEvidence, recoveryStrategyForRevision, recoveryFailure
 import { analyzeSentence, analyzeClaimEvidence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
 import { buildDocumentContext } from 'lib/document-context.js';
 import { verifyOutcome } from 'lib/outcome.js';
+import { sentinelSafetySelfTest } from 'lib/sentinel-safety.js';
 import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment, recommendLessonStrategies, applyApprovedStrategyPolicy, summarizeStrategyTrialOutcomes } from 'lib/learning-evaluation.js';
 
 export const access = 'scheduler';
@@ -480,6 +481,7 @@ export default async function (req, res) {
   results.push(await testIndependentVerifier());
   results.push(await testClaimVerifierSourceIndependence());
   results.push(testGeneralOutcomeVerification());
+  results.push({name:'sentinel_authorized_observation_safety',...sentinelSafetySelfTest(),semantic:true});
   results.push(testLabeledClaimEvidenceFixtures());
   results.push(testContextAwareClaimScope());
   results.push(testDocumentLevelClaimContext());
