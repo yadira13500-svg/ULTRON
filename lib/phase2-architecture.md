@@ -165,6 +165,11 @@ Turn the current single-runner workflow into a coordinated team of bounded speci
 - On runner recovery, a completed step's persisted result is authoritative. If a crash occurred after the step result committed but before its execution-specialist ledger row was finalized, recovery reconciles that row to completed from the step result before expiring/requeueing any other specialist tasks. It does not rerun or rewrite the completed step.
 - New deterministic self-test fixtures verify exact replay acceptance, changed immutable input rejection across all three write types, and preservation of later lifecycle states. These are contract tests; they do not replace live database fault-injection for every storage backend boundary.
 
+## Mission Inspector Recovery History (v250)
+- The existing owner-authenticated `/api/ultron/agent?id=...` detail response now includes the latest 100 `ultron_recovery_events` for that owner and mission, newest first. The query is scoped by both `run_id` and `owner_id`; anonymous access remains blocked at the edge.
+- The existing mission detail panel renders an audit timeline with decision, timestamp, attempt, related step, reason and expandable recorded snapshot, plus decision counts. Empty history is explicitly shown rather than inventing events.
+- Recovery history is read-only in the UI. It does not offer a button to replay, approve or mutate a recovery event; approval flows remain in their existing dedicated mission controls.
+
 ## Recovery Controller (v248)
 - `lib/recovery-controller.js` evaluates a bounded state snapshot and selects one explicit action: preserve completed work, wait for a live lease or dependency, resume safe interrupted work, retry a transient failure within the attempt budget, request a plan change for permanent failures, or require owner approval for external side effects and exhausted retries.
 - Migration 026 adds an append-only, owner-scoped `ultron_recovery_events` ledger. Stable event keys make recovery decisions idempotent; each event records the action, reason, attempt and minimal state snapshot without replacing the original step result.
