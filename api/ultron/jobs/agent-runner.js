@@ -221,11 +221,11 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
   }
   if(step.step_type==='create_task') {
     const title=String(input.title||'').trim(), body=String(input.body||'').trim();
-    const inserted=await db.query("INSERT INTO ultron_items(owner_id,kind,title,body,status) VALUES($1,'task',$2,$3,'open') RETURNING id,title,kind,status,created_at",[owner,title,body]);
-    const saved=inserted.rows[0];
-    const check=(await db.query('SELECT id,title,kind,status FROM ultron_items WHERE id=$1 AND owner_id=$2',[saved.id,owner])).rows[0];
-    if(!check||check.id!==saved.id||check.status!=='open') throw new Error('The task was inserted but its persisted state could not be verified.');
-    return {created:true,operationVerified:true,verified:true,item:check};
+    const inserted=await db.query("INSERT INTO ultron_items(owner_id,kind,title,body,status,agent_step_id) VALUES($1,'task',$2,$3,'open',$4) ON CONFLICT(owner_id,agent_step_id) WHERE agent_step_id IS NOT NULL DO NOTHING RETURNING id,title,kind,status,created_at",[owner,title,body,step.id]);
+    const saved=inserted.rows[0]||(await db.query('SELECT id,title,kind,status,created_at FROM ultron_items WHERE owner_id=$1 AND agent_step_id=$2',[owner,step.id])).rows[0];
+    const check=saved?(await db.query('SELECT id,title,kind,status FROM ultron_items WHERE id=$1 AND owner_id=$2',[saved.id,owner])).rows[0]:null;
+    if(!check||check.id!==saved.id||check.title!==title||check.kind!=='task') throw new Error('The task was not persisted with the expected mission-step identity.');
+    return {created:!!inserted.rows[0],idempotentReplay:!inserted.rows[0],operationVerified:true,verified:true,item:check};
   }
   if(step.step_type==='save_learning') {
     const sourceUrl=String(input.source_url||'');
@@ -240,11 +240,11 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
     const suppliedSummary=String(input.summary||'').trim();
     const summary=(suppliedSummary|| (capturedSource?'Extractive source note (not independently verified): '+String(capturedSource.title||'')+'. '+String(capturedSource.excerpt||'').slice(0,2700):'')).slice(0,3000);
     if(!topic||!summary) throw new Error('Learning needs a topic and either a summary or a previously captured source excerpt.');
-    const saved=await db.query("INSERT INTO ultron_knowledge(owner_id,topic,summary,source_url,source_name,published_at,source_status,last_checked_at) VALUES($1,$2,$3,$4,$5,'','available',CASE WHEN $4<>'' THEN now() ELSE NULL END) RETURNING id,topic,summary,source_url,source_name,created_at",[owner,topic,summary,sourceUrl,sourceName]);
-    const row=saved.rows[0];
-    const persisted=(await db.query('SELECT id,topic,summary,source_url,source_name,created_at FROM ultron_knowledge WHERE id=$1 AND owner_id=$2',[row.id,owner])).rows[0];
+    const saved=await db.query("INSERT INTO ultron_knowledge(owner_id,topic,summary,source_url,source_name,published_at,source_status,last_checked_at,agent_step_id) VALUES($1,$2,$3,$4,$5,'','available',CASE WHEN $4<>'' THEN now() ELSE NULL END,$6) ON CONFLICT(owner_id,agent_step_id) WHERE agent_step_id IS NOT NULL DO NOTHING RETURNING id,topic,summary,source_url,source_name,created_at",[owner,topic,summary,sourceUrl,sourceName,step.id]);
+    const row=saved.rows[0]||(await db.query('SELECT id,topic,summary,source_url,source_name,created_at FROM ultron_knowledge WHERE owner_id=$1 AND agent_step_id=$2',[owner,step.id])).rows[0];
+    const persisted=row?(await db.query('SELECT id,topic,summary,source_url,source_name,created_at FROM ultron_knowledge WHERE id=$1 AND owner_id=$2',[row.id,owner])).rows[0]:null;
     if(!persisted||persisted.topic!==topic||persisted.summary!==summary||persisted.source_url!==sourceUrl) throw new Error('Learning was written but its persisted contents could not be independently checked.');
-    return {saved:true,operationVerified:true,verified:true,verificationType:'knowledge_persistence',knowledge:persisted,sourceReachable:!!sourceUrl,factualAccuracyVerified:false,note:'The knowledge record was read back successfully. Its factual claims have not been independently established.'};
+    return {saved:!!saved.rows[0],idempotentReplay:!saved.rows[0],operationVerified:true,verified:true,verificationType:'knowledge_persistence',knowledge:persisted,sourceReachable:!!sourceUrl,factualAccuracyVerified:false,note:'The knowledge record was read back successfully. Its factual claims have not been independently established.'};
   }
   throw new Error('Unsupported agent step type.');
 }
