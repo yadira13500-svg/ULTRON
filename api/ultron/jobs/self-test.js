@@ -3,7 +3,7 @@ import { searchPublicWeb } from 'lib/search.js';
 import { extractResearchQuery, planMission } from 'lib/mission-plan.js';
 import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
-import { analyzeSentence, sourceIndependence } from 'lib/claims.js';
+import { analyzeSentence, stanceOf, sourceIndependence } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
 
 export const access = 'scheduler';
