@@ -1,5 +1,6 @@
 import { db } from 'hatchable';
 import { summarizeLessonEffectiveness, summarizeLessonExperiment, recommendLessonStrategies, summarizeStrategyTrialOutcomes } from 'lib/learning-evaluation.js';
+import { summarizeRecoveryEvidence } from 'lib/recovery-evaluation.js';
 export const access = 'admin';
 export const methods = ['GET','POST','PUT','DELETE'];
 const domains=['science','coding','business','world affairs','education'];
@@ -29,10 +30,13 @@ export default async function(req,res){
   const strategyTrialVersions=new Map();
   for(const policy of [...policySnapshots,...activeStrategyPolicies]) if(policy?.policyVersion||policy?.policy_version){const version=String(policy.policyVersion||policy.policy_version);if(!strategyTrialVersions.has(version))strategyTrialVersions.set(version,{policyVersion:version,lessonId:String(policy.lessonId||policy.lesson_id),stepType:String(policy.stepType||policy.step_type),approvedAt:policy.approvedAt||policy.approved_at||null,active:activeStrategyPolicies.some(x=>String(x.policy_version)===version)});}
   const strategyTrials=[...strategyTrialVersions.values()].map(policy=>{const events=strategyTrialRows.filter(x=>String(x.policy_version)===policy.policyVersion);const baseline=lessonObservations.filter(x=>String(x.lessonId)===policy.lessonId&&String(x.stepType)===policy.stepType&&policy.approvedAt&&Date.parse(x.observedAt)<Date.parse(policy.approvedAt));return {...policy,...summarizeStrategyTrialOutcomes(events,baseline,5)};});
+  const recoveryEvents=(await db.query('SELECT revision_id,event_type,strategy_type,failed_step_type,failure_category,owner_modified_inputs,plan_version,metadata,occurred_at FROM ultron_recovery_observations WHERE owner_id=$1 ORDER BY occurred_at DESC LIMIT 2000',[owner])).rows;
+  const recoveryEvidence=summarizeRecoveryEvidence(recoveryEvents,5);
+  const recoveryTotals={proposals:recoveryEvents.filter(x=>x.event_type==='proposed').length,approved:recoveryEvents.filter(x=>x.event_type==='approved').length,rejected:recoveryEvents.filter(x=>x.event_type==='rejected').length,terminalOutcomes:recoveryEvents.filter(x=>['terminal_completed','terminal_failed'].includes(x.event_type)).length};
   const experimentConfig=(await db.query('SELECT enabled,min_per_cohort,updated_at FROM ultron_lesson_experiments WHERE owner_id=$1',[owner])).rows[0]||{enabled:false,min_per_cohort:5};
   const experimentEvents=specialistHistory.rows.flatMap(row=>Array.isArray(row.context_snapshot?.experimentObservations)?row.context_snapshot.experimentObservations:[]);
   const lessonExperimentResults=summarizeLessonExperiment(experimentEvents,experimentConfig.min_per_cohort);
-  return res.json({preferences:p.rows,nodes:n.rows,edges:e.rows,researchPlans:r.rows,feedback:f.rows,skills:s.rows,skillAssessments:assessments.rows,skillApplications:applications.rows,suggestions:g.rows,agentLessons:l.rows,claimReviews:c.rows,learningEffectiveness,strategyRecommendations,activeStrategyPolicies,strategyTrials,lessonExperiment:{...experimentConfig,results:lessonExperimentResults},domains});
+  return res.json({preferences:p.rows,nodes:n.rows,edges:e.rows,researchPlans:r.rows,feedback:f.rows,skills:s.rows,skillAssessments:assessments.rows,skillApplications:applications.rows,suggestions:g.rows,agentLessons:l.rows,claimReviews:c.rows,learningEffectiveness,strategyRecommendations,activeStrategyPolicies,strategyTrials,recoveryEvidence,recoveryTotals,lessonExperiment:{...experimentConfig,results:lessonExperimentResults},domains});
  }
  if(req.method==='POST'){
   const type=String(b.type||'');

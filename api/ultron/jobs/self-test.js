@@ -5,6 +5,7 @@ import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRole
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
 import { validateMissionGraph, buildMissionCoordinationReport } from 'lib/mission-coordinator.js';
 import { buildAdaptiveReplan, verifyAdaptiveReplan } from 'lib/mission-replanning.js';
+import { summarizeRecoveryEvidence, recoveryStrategyForRevision, recoveryFailureCategory } from 'lib/recovery-evaluation.js';
 import { analyzeSentence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
 import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment, recommendLessonStrategies, applyApprovedStrategyPolicy, summarizeStrategyTrialOutcomes } from 'lib/learning-evaluation.js';
@@ -86,6 +87,26 @@ function testAdaptiveMissionReplanning() {
   const tamperCheck=verifyAdaptiveReplan(steps,tampered,proposal.preservedPositions,proposal.resetPositions);
   const ok=proposal.valid&&proposal.readyForOwnerApproval&&proposal.resetPositions.join(',')==='2,3'&&proposal.preservedPositions.join(',')==='1,4'&&proposal.revised.length===1&&proposal.plan[1].input.query!=='narrow topic'&&proposal.verifier.passed&&!manual.readyForOwnerApproval&&manual.manualInputRequired.length===1&&tamperCheck.passed===false&&proposal.verifier.factualAccuracyVerified===false;
   return {name:'adaptive_mission_replanning_and_preservation',ok,semantic:ok,detail:ok?'A failed research branch receives a bounded revised query; only that branch and pending dependents reset; completed work is preserved; source URL substitutions require owner input; tampered completed work is rejected.':'Adaptive replanning changed completed work, missed dependent tasks or bypassed owner input.',resetPositions:proposal.resetPositions,preservedPositions:proposal.preservedPositions,manualInputRequired:manual.manualInputRequired,tamperedCompletedRejected:!tamperCheck.passed};
+}
+
+function testRecoveryIntelligence() {
+  const events=[];
+  for(let i=0;i<5;i++){
+    const id='revision-'+i;
+    events.push({revision_id:id,event_type:'proposed',strategy_type:'broadened_research_query',failure_category:'insufficient_results'});
+    events.push({revision_id:id,event_type:'approved',strategy_type:'broadened_research_query'});
+    if(i<4)events.push({revision_id:id,event_type:'terminal_completed',metadata:{operationallyVerified:true,retryCount:i===1?1:0}});
+    else events.push({revision_id:id,event_type:'terminal_failed',metadata:{operationallyVerified:false,retryCount:2}});
+  }
+  events.push({revision_id:'pending-only',event_type:'proposed',strategy_type:'owner_corrected_inputs'});
+  events.push({revision_id:'pending-only',event_type:'approved',strategy_type:'owner_corrected_inputs'});
+  events.push({revision_id:'rejected-only',event_type:'proposed',strategy_type:'owner_corrected_inputs'});
+  events.push({revision_id:'rejected-only',event_type:'rejected',strategy_type:'owner_corrected_inputs'});
+  const summaries=summarizeRecoveryEvidence(events,5),measured=summaries.find(x=>x.strategyType==='broadened_research_query'),pending=summaries.find(x=>x.strategyType==='owner_corrected_inputs');
+  const strategy=recoveryStrategyForRevision({id:'x',rationale:{ownerProvidedInputs:[{position:1}],revised:[]}})==='owner_corrected_inputs';
+  const category=recoveryFailureCategory('Source retrieval failed: HTTP 403')==='access_denied';
+  const ok=measured?.observations===5&&measured.completed===4&&measured.failed===1&&measured.verified===4&&measured.retries===3&&measured.recommendation==='promising_review'&&measured.automaticSelection===false&&measured.causalEffectEstablished===false&&pending?.observations===0&&strategy&&category;
+  return {name:'recovery_intelligence_terminal_outcomes_and_human_control',ok,semantic:ok,detail:ok?'Only approved revisions with terminal outcomes contribute; pending and rejected proposals do not inflate success; retries are measured; five-outcome recommendations remain advisory and non-causal.':'Recovery evidence counted an ineligible revision or violated the owner-approval boundary.',measured:measured?{observations:measured.observations,verified:measured.verified,retries:measured.retries,recommendation:measured.recommendation}:null,pendingObservations:pending?.observations??null};
 }
 
 function testMissionCoordinationReview() {
@@ -332,6 +353,7 @@ export default async function (req, res) {
   results.push(testMissionPlanningRegression());
   results.push(testMissionCoordinationReview());
   results.push(testAdaptiveMissionReplanning());
+  results.push(testRecoveryIntelligence());
   results.push(testMissionRuntimePolicies());
   results.push(testSpecialistLeaseBoundaryRecovery());
   results.push(testAdaptiveLearningMeasurement());
