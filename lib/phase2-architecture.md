@@ -112,4 +112,11 @@ Turn the current single-runner workflow into a coordinated team of bounded speci
 - This first cycle deliberately stops at independently verified research leads. To reassess a claim, selected URLs must subsequently be captured and passed through a new assess_claim operation; the system does not silently rewrite the original claim or declare it true. Publisher grouping and claim screening remain heuristic. No paid model calls or automatic external side effects.
 - Self-test adds seeded coverage for weak-support claims, conflict investigation, freshness, truncated-source recovery, verifier challenges, bounded queries and owner-approval gating.
 
+## Repaired claim capture and reassessment (v224)
+- The evidence-repair mission inspector now lets the owner select 2–4 URLs returned by a completed repair search for a specific original claim. The API checks owner scope, original mission linkage, terminal repair-run state, exact claim position/text and membership of every selected URL in the completed search results.
+- A new immutable follow-up mission captures each selected public HTTPS source first, then runs the existing deterministic claim-assessment operation with explicit dependencies on all captures. It does not modify or overwrite the original claim assessment.
+- The selection gate requires unique URLs and at least two distinct hostnames as a coarse diversity check only; this does not prove editorial independence. The claim screen reports supporting/contradicting/unclear candidates and conflicts using the existing heuristic evaluator.
+- Each retrieval and claim-assessment step receives a separate verifier record. The mission inspector shows original-versus-revised screening status, source counts and human-review state. Factual truth remains explicitly unverified.
+- Regression coverage verifies selection bounds, completed-search URL provenance, unique host diversity, capture-before-assessment dependencies and the no-truth-certification boundary. No paid model calls or automatic source selection are introduced.
+
 This document records the live bounded-specialist implementation and explicitly distinguishes it from fully autonomous, model-backed specialist agents.

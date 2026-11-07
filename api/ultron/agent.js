@@ -34,7 +34,14 @@ export default async function(req,res) {
       const missionRevisions=(await db.query('SELECT id,revision_no,base_plan_version,candidate_plan,affected_positions,preserved_positions,verifier,status,rationale,created_at,reviewed_at FROM ultron_mission_revisions WHERE run_id=$1 AND owner_id=$2 ORDER BY revision_no DESC',[id,owner])).rows;
       const evidenceRepairs=(await db.query('SELECT id,proposal_no,status,proposal,created_run_id,created_at,reviewed_at FROM ultron_evidence_repairs WHERE source_run_id=$1 AND owner_id=$2 ORDER BY proposal_no DESC',[id,owner])).rows;
       const coordination=buildMissionCoordinationReport(steps,run.result?.acceptance||null,specialistTasks);
-      return res.json({run,steps,specialistTasks,specialistRevisions,missionRevisions,evidenceRepairs,coordination});
+      let evidenceRepairComparison=null;
+      if(run.plan?.evidenceRepairVersion==='evidence_repair_assessment_v1'&&run.plan?.sourceRunId&&Number.isInteger(Number(run.plan?.originalClaimPosition))){
+        const originalStep=(await db.query("SELECT id,title,input,result FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND position=$3 AND step_type='assess_claim'",[run.plan.sourceRunId,owner,Number(run.plan.originalClaimPosition)])).rows[0]||null;
+        const revisedStep=steps.find(s=>s.step_type==='assess_claim')||null;
+        const review=revisedStep?(await db.query('SELECT review_status,reviewer_note,correction,reviewed_at FROM ultron_claim_reviews WHERE owner_id=$1 AND step_id=$2',[owner,revisedStep.id])).rows[0]||null:null;
+        evidenceRepairComparison={originalRunId:run.plan.sourceRunId,repairRunId:run.plan.repairRunId,claimPosition:Number(run.plan.originalClaimPosition),claim:run.plan.originalClaim,originalAssessmentStatus:originalStep?.result?.deepAnalysis?.status||originalStep?.result?.assessmentStatus||'not_assessed',revisedAssessmentStatus:revisedStep?.result?.deepAnalysis?.status||revisedStep?.result?.assessmentStatus||'pending',originalSourceCount:Number(originalStep?.result?.sourceCount||originalStep?.result?.allSources?.length||0),revisedSourceCount:Number(revisedStep?.result?.sourceCount||0),revisedSources:revisedStep?.result?.allSources||[],reviewStatus:review?.review_status||'pending',reviewerNote:review?.reviewer_note||'',correction:review?.correction||'',factualTruthVerified:false};
+      }
+      return res.json({run,steps,specialistTasks,specialistRevisions,missionRevisions,evidenceRepairs,evidenceRepairComparison,coordination});
     }
     const runs = (await db.query('SELECT id,title,objective,status,result,error,attempts,created_at,updated_at,completed_at FROM ultron_agent_runs WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 40',[owner])).rows;
     return res.json({runs});

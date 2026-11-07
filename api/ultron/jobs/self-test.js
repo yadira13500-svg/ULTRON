@@ -5,7 +5,7 @@ import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRole
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
 import { validateMissionGraph, buildMissionCoordinationReport } from 'lib/mission-coordinator.js';
 import { buildMissionIntelligence } from 'lib/mission-intelligence.js';
-import { buildEvidenceRepairProposal, verifyEvidenceRepairProposal } from 'lib/evidence-repair.js';
+import { buildEvidenceRepairProposal, verifyEvidenceRepairProposal, buildRepairedClaimAssessmentPlan } from 'lib/evidence-repair.js';
 import { buildAdaptiveReplan, verifyAdaptiveReplan } from 'lib/mission-replanning.js';
 import { summarizeRecoveryEvidence, recoveryStrategyForRevision, recoveryFailureCategory } from 'lib/recovery-evaluation.js';
 import { analyzeSentence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
@@ -330,6 +330,16 @@ function testAutonomousEvidenceRepairPlanning() {
   return {name:'autonomous_evidence_repair_proposal_safety',ok,semantic:ok,taskCount:proposal.tasks.length,repairTypes:[...kinds],ownerApprovalRequired:noAuto,detail:ok?'Weak claims, conflicts, undated/truncated sources and verifier challenges create bounded repair searches; no execution occurs before owner approval.':'Evidence repair planning exceeded its bounded or approval-gated policy.'};
 }
 
+function testRepairedClaimCaptureAndAssessmentPlan() {
+ const urls=['https://alpha.example/evidence','https://beta.example/primary'];
+ const valid=buildRepairedClaimAssessmentPlan({sourceRunId:'original',repairRunId:'repair',claimPosition:3,claim:'The proposal was approved in 2025.',selectedUrls:urls,candidateUrls:urls});
+ const duplicateHost=buildRepairedClaimAssessmentPlan({sourceRunId:'original',repairRunId:'repair',claimPosition:3,claim:'The proposal was approved in 2025.',selectedUrls:['https://www.alpha.example/a','https://alpha.example/b'],candidateUrls:['https://www.alpha.example/a','https://alpha.example/b']});
+ const invented=buildRepairedClaimAssessmentPlan({sourceRunId:'original',repairRunId:'repair',claimPosition:3,claim:'The proposal was approved in 2025.',selectedUrls:['https://alpha.example/evidence','https://evil.example/not-in-search'],candidateUrls:urls});
+ const steps=valid.steps,assessment=steps[steps.length-1];
+ const ok=valid.valid&&steps.length===3&&steps[0].type==='retrieve_source'&&steps[1].type==='retrieve_source'&&assessment.type==='assess_claim'&&assessment.input.source_urls.length===2&&assessment.depends_on.join(',')==='1,2'&&!valid.factualTruthVerified&&!duplicateHost.valid&&!invented.valid;
+ return {name:'repaired_claim_capture_and_assessment_plan',ok,semantic:ok,sourceCount:valid.sourceCount,dependencyGate:assessment.depends_on,duplicateHostRejected:!duplicateHost.valid,unselectedUrlRejected:!invented.valid,detail:ok?'Only selected completed-search URLs can be captured; the new claim assessment waits for every capture and remains non-truth-certifying.':'Repaired claim capture/assessment plan violated source-selection or dependency safeguards.'};
+}
+
 function testExplicitArithmeticEvaluation() {
   const fixtures=[
     {name:'correct_sum',input:'50 + 60 = 110',status:'evaluated',matches:true},
@@ -384,6 +394,7 @@ export default async function (req, res) {
   results.push(testMissionCoordinationReview());
   results.push(testMissionIntelligenceAdjudication());
   results.push(testAutonomousEvidenceRepairPlanning());
+  results.push(testRepairedClaimCaptureAndAssessmentPlan());
   results.push(testAdaptiveMissionReplanning());
   results.push(testRecoveryIntelligence());
   results.push(testMissionRuntimePolicies());
