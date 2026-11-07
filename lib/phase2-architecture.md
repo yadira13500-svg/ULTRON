@@ -177,4 +177,10 @@ Turn the current single-runner workflow into a coordinated team of bounded speci
 - Self-test includes a decision matrix for completed-step preservation, live lease/dependency waits, safe resume, transient retry, permanent-failure replanning, exhausted retry budget and external-side-effect approval. These are deterministic policy tests; live database crash injection at every commit boundary remains separate work.
 - No paid model calls, provider credits, new external actions, existing data rewrites or visibility changes are introduced.
 
+## Sentinel defense-support scope hardening (next release)
+- Sentinel's authorized, consent-based analysis allowlist now explicitly includes infrastructure condition, environmental hazards, equipment condition, logistics-status summaries and after-action reporting alongside uploaded/exported imagery and telemetry summaries.
+- Operation names are normalized for case, whitespace and hyphen variants before policy evaluation. The denylist now also explicitly rejects person-tracking aliases, target ranking, attack planning, engagement recommendations, weapons guidance, persistent surveillance and device-control aliases.
+- The regression matrix covers five permitted analysis examples and eight blocked authorization/live-access/identity/tracking/attack-planning/control cases. All permitted results remain observation-only, require human review and explicitly disable action execution.
+- These are analytical support functions only. They do not provide tactical targeting, force employment recommendations, weapons/fire-control, autonomous navigation, live sensor access or command execution. Evidence remains subject to human assessment; no truth or threat-certainty score is implied. No paid provider calls are added.
+
 This document records the live bounded-specialist implementation and explicitly distinguishes it from fully autonomous, model-backed specialist agents.
