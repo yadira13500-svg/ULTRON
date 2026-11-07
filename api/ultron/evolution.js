@@ -1,4 +1,5 @@
 import { db } from 'hatchable';
+import { summarizeLessonEffectiveness } from 'lib/learning-evaluation.js';
 export const access = 'admin';
 export const methods = ['GET','POST','PUT','DELETE'];
 const domains=['science','coding','business','world affairs','education'];
@@ -18,7 +19,10 @@ export default async function(req,res){
   ]);
   const assessments=await db.query('SELECT id,skill_id,answers,score,practical_pass,practical_evidence,reviewer_notes,status,submitted_at,reviewed_at,weak_concepts,practice_tasks,concept_results FROM ultron_skill_assessments WHERE owner_id=$1 ORDER BY submitted_at DESC LIMIT 100',[owner]);
   const applications=await db.query('SELECT id,skill_id,run_id,task_description,metric_label,metric_direction,baseline_value,baseline_evidence,outcome_value,outcome_note,improvement_value,improvement_percent,status,created_at,measured_at FROM ultron_skill_applications WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner]);
-  return res.json({preferences:p.rows,nodes:n.rows,edges:e.rows,researchPlans:r.rows,feedback:f.rows,skills:s.rows,skillAssessments:assessments.rows,skillApplications:applications.rows,suggestions:g.rows,agentLessons:l.rows,claimReviews:c.rows,domains});
+  const specialistHistory=await db.query("SELECT context_snapshot,status,attempts FROM ultron_specialist_tasks WHERE owner_id=$1 AND phase='execution' ORDER BY updated_at DESC LIMIT 500",[owner]);
+  const lessonObservations=specialistHistory.rows.flatMap(row=>Array.isArray(row.context_snapshot?.lessonObservations)?row.context_snapshot.lessonObservations:[]);
+  const learningEffectiveness=summarizeLessonEffectiveness(lessonObservations);
+  return res.json({preferences:p.rows,nodes:n.rows,edges:e.rows,researchPlans:r.rows,feedback:f.rows,skills:s.rows,skillAssessments:assessments.rows,skillApplications:applications.rows,suggestions:g.rows,agentLessons:l.rows,claimReviews:c.rows,learningEffectiveness,domains});
  }
  if(req.method==='POST'){
   const type=String(b.type||'');

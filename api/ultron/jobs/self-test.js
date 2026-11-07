@@ -5,6 +5,7 @@ import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRole
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
 import { analyzeSentence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
+import { createLessonObservationEvents, summarizeLessonEffectiveness } from 'lib/learning-evaluation.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -79,6 +80,22 @@ function testMissionRuntimePolicies() {
   const roles=specialistRoleForStep('research_search')==='researcher'&&specialistRoleForStep('assess_claim')==='analyst'&&specialistRoleForStep('create_task')==='executor';
   const ok=depsBlocked&&depsReady&&retry.retry&&exhausted.terminal&&statusOnly.retry&&!permanent.transient&&!permanent.retry&&roles&&MAX_SPECIALIST_CONCURRENCY===3;
   return {name:'mission_runtime_dependency_retry_and_roles',ok,semantic:ok,detail:ok?'Dependency gating, status-only transient retry, permanent-failure handling and role routing passed.':'A dependency, retry, permanent-failure or specialist-role policy regressed.',statusOnlyRetry:statusOnly.retry,permanentFailureNotRetried:!permanent.retry,maxParallel:MAX_SPECIALIST_CONCURRENCY};
+}
+
+function testAdaptiveLearningMeasurement() {
+  const lesson={id:'lesson-fixture-1',lesson:'Use an alternate accessible source after a 403.',confidence:0.8};
+  const events=[
+    ...createLessonObservationEvents([lesson],'started',1,'retrieve_source'),
+    ...createLessonObservationEvents([lesson],'operationally_verified',1,'retrieve_source'),
+    ...createLessonObservationEvents([lesson],'retryable_failure',2,'retrieve_source'),
+    ...createLessonObservationEvents([lesson],'operationally_verified',3,'retrieve_source'),
+    ...createLessonObservationEvents([lesson],'failed',4,'retrieve_source'),
+    ...createLessonObservationEvents([lesson],'verifier_rejected',5,'retrieve_source')
+  ];
+  const summary=summarizeLessonEffectiveness(events,5)[0];
+  const small=summarizeLessonEffectiveness(events.slice(0,4),5)[0];
+  const ok=summary?.attempts===5&&summary.operationallyVerified===2&&summary.unsuccessfulAttempts===3&&summary.evidenceLevel==='descriptive_only'&&summary.operationalSuccessRate===0.4&&summary.causalEffectEstablished===false&&summary.autoPromotionAllowed===false&&small?.evidenceLevel==='insufficient_evidence'&&small?.recommendation==='collect_more_observations';
+  return {name:'adaptive_learning_outcome_measurement',ok,semantic:ok,detail:ok?'Only terminal observations are counted; verifier-passed and failed attempts remain distinct; small samples are marked insufficient; descriptive patterns never establish causation or auto-promote lessons.':'Adaptive learning measurement overstated its evidence or miscounted outcomes.',summary,smallSampleLevel:small?.evidenceLevel};
 }
 
 function testCancellationGuards() {
@@ -230,6 +247,7 @@ export default async function (req, res) {
   results.push(testMissionPlanningRegression());
   results.push(testMissionRuntimePolicies());
   results.push(testSpecialistLeaseBoundaryRecovery());
+  results.push(testAdaptiveLearningMeasurement());
   results.push(testCancellationGuards());
   results.push(testMissionGraphPolicy());
   results.push(testSpecialistRevisionPolicy());
