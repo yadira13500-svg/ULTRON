@@ -128,6 +128,11 @@ Turn the current single-runner workflow into a coordinated team of bounded speci
 ## Material claim-atom screening (v228)
 - Each selected passage now reports explicit screening checks for named entities, dates/years, quantities, negation, direction and outcome polarity, including missing required atoms.
 - A passage is not labeled supportive when a required named entity, date or quantity from the claim is absent. Contradictory polarity/direction/outcome or conflicting numbers remain contradiction candidates; hedged passages remain unclear. This deliberately favors uncertainty over unsupported support labels.
-- The mission inspector exposes these checks with the exact source passage. The checks are deterministic and conservative; they do not understand paraphrase, context, attribution or causal implication as a semantic model would. Human review remains required; no paid calls.
+- The mission inspector exposes these checks with the exact source passage. The checks are deterministic and conservative; they do not understand paraphrase or context as a semantic model would. Human review remains required; no paid calls.
+
+## Evidence scope and attribution screening (v229)
+- Added explicit markers for attributed statements, quotation, conditional language, hedging and causal wording. When a claim asserts a causal relationship but the selected passage does not express one, the passage is marked unclear rather than supportive.
+- Attributed, quoted, conditional or hedged passages are not counted as direct support by this lexical screen. The UI exposes the scope flags beside the exact quote so the reviewer can inspect who is speaking and under what conditions.
+- Added regression fixtures for attribution, conditional statements, quoted statements, missing causal links and explicit causal wording. These are conservative warning signals, not a natural-language understanding engine; context and semantic entailment remain human-review tasks.
 
 This document records the live bounded-specialist implementation and explicitly distinguishes it from fully autonomous, model-backed specialist agents.
