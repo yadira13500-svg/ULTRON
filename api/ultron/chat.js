@@ -43,6 +43,8 @@ async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia')
   const defs = Object.entries(tools).map(([name, t]) => ({ type: 'function', function: { name, description: t.description, parameters: t.inputSchema } }));
   const convo = messages.map(m => ({ role: m.role, content: String(m.content ?? '') }));
   let useTools = true;
+  const toolsRan = [];
+  let nudgedAfterTools = false;
   for (let step = 0; step < 7; step++) {
     if (useTools && step >= 4) {
       useTools = false;
@@ -60,7 +62,7 @@ async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia')
         const candidateMessage = data.choices && data.choices[0] && data.choices[0].message;
         if (candidateMessage && (String(candidateMessage.content || '').trim() || (candidateMessage.tool_calls || []).length)) {
           usable = true;
-          candidates = [model];
+          candidates = [model, ...candidates.filter(m => m !== model)];
           break;
         }
         failText = model + ' -> HTTP ' + r.status + ': empty assistant content';
@@ -69,7 +71,17 @@ async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia')
       failText = model + ' -> ' + r.status + ': ' + (await r.text()).slice(0, 160);
       if (![400, 404, 410, 422].includes(r.status)) break;
     }
-    if (!usable) throw new Error('NVIDIA API ' + (failText || 'No model returned usable content.'));
+    if (!usable) {
+      if (toolsRan.length) {
+        if (!nudgedAfterTools) {
+          nudgedAfterTools = true;
+          convo.push({ role: 'user', content: 'Confirm to the user in one short, plain sentence what you just did.' });
+          continue;
+        }
+        return { text: 'Done. I completed that for you (' + [...new Set(toolsRan)].join(', ') + '). Check your lists to confirm.', usage: null, steps: step };
+      }
+      throw new Error('NVIDIA API ' + (failText || 'No model returned usable content.'));
+    }
     const msg = data.choices && data.choices[0] && data.choices[0].message;
     if (!msg) throw new Error('NVIDIA returned no message.');
     const calls = msg.tool_calls || [];
@@ -89,6 +101,7 @@ async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia')
     for (const c of calls) {
       let out;
       const toolName=String(c.function?.name||'unknown');
+      toolsRan.push(toolName);
       console.log('ULTRON tool dispatch',toolName);
       try {
         const t = tools[toolName];
