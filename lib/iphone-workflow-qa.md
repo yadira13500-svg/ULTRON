@@ -31,4 +31,11 @@ The owner has confirmed that ULTRON has been added to the iPhone Home Screen, la
 - Permission state for microphone and camera.
 - No sensitive account information or credentials in screenshots.
 
-The Home Screen launch/use item is owner-confirmed. Do not mark overall mobile acceptance complete until the remaining device-specific checks are run and recorded on a real iPhone or trustworthy iOS simulator.
+## Automated release evidence — 2026-11-07 (ULTRON v260)
+- Managed Chromium loaded the deployed app shell through a short-lived anonymous preview; title, main heading, application script, Mission Control and chat panel were present.
+- Responsive viewport checks at 320×568, 390×844, 844×390, 1024×768 and 1440×900 found no horizontal document overflow.
+- The app's mobile CSS includes safe-area insets, 16px form controls and touch-target sizing for coarse-pointer devices. Managed Chromium did not emulate iOS Safari or a coarse-pointer device, so those specific rules still need physical confirmation.
+- Backend acceptance: 39/39 self-tests passed; a real URL-verification mission completed, persisted and reopened with an independent verifier pass; a failed research mission produced a recovery proposal that preserved completed steps and was safely rejected without execution.
+- Data integrity audit found zero orphan mission steps and zero orphan specialist tasks.
+
+The Home Screen launch/use item is owner-confirmed. Automated Chromium viewport checks are not a substitute for iOS Safari. Do not mark overall mobile acceptance complete until microphone/camera permissions, keyboard behavior, VoiceOver, standalone safe areas, session persistence and the remaining mission interactions are run and recorded on a real iPhone or trustworthy iOS simulator.
