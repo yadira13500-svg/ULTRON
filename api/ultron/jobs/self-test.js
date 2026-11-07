@@ -330,7 +330,7 @@ function testContextAwareClaimScope() {
   const claim='The regulator approved the medicine.';
   const sources=[
     {url:'https://alpha.example/report',host:'alpha.example',title:'Report',publisher:'Alpha',excerpt:'The company spokesperson said this.\nThe regulator approved the medicine.'},
-    {url:'https://beta.example/report',host:'beta.example',title:'Report',publisher:'Beta',excerpt:'The minister stated.\nThe project is complete.'}
+    {url:'https://beta.example/report',host:'beta.example',title:'Report',publisher:'Beta',excerpt:'The government minister stated.\nThe project is complete.'}
   ];
   const attributed=analyzeClaimEvidence(claim,[sources[0]]).perSource[0];
   const unrelated=analyzeClaimEvidence('The project is complete.',[sources[1]]).perSource[0];
