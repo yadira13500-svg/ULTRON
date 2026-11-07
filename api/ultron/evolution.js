@@ -1,5 +1,5 @@
 import { db } from 'hatchable';
-import { summarizeLessonEffectiveness } from 'lib/learning-evaluation.js';
+import { summarizeLessonEffectiveness, summarizeLessonExperiment } from 'lib/learning-evaluation.js';
 export const access = 'admin';
 export const methods = ['GET','POST','PUT','DELETE'];
 const domains=['science','coding','business','world affairs','education'];
@@ -22,10 +22,18 @@ export default async function(req,res){
   const specialistHistory=await db.query("SELECT context_snapshot,status,attempts FROM ultron_specialist_tasks WHERE owner_id=$1 AND phase='execution' ORDER BY updated_at DESC LIMIT 500",[owner]);
   const lessonObservations=specialistHistory.rows.flatMap(row=>Array.isArray(row.context_snapshot?.lessonObservations)?row.context_snapshot.lessonObservations:[]);
   const learningEffectiveness=summarizeLessonEffectiveness(lessonObservations);
-  return res.json({preferences:p.rows,nodes:n.rows,edges:e.rows,researchPlans:r.rows,feedback:f.rows,skills:s.rows,skillAssessments:assessments.rows,skillApplications:applications.rows,suggestions:g.rows,agentLessons:l.rows,claimReviews:c.rows,learningEffectiveness,domains});
+  const experimentConfig=(await db.query('SELECT enabled,min_per_cohort,updated_at FROM ultron_lesson_experiments WHERE owner_id=$1',[owner])).rows[0]||{enabled:false,min_per_cohort:5};
+  const experimentEvents=specialistHistory.rows.flatMap(row=>Array.isArray(row.context_snapshot?.experimentObservations)?row.context_snapshot.experimentObservations:[]);
+  const lessonExperimentResults=summarizeLessonExperiment(experimentEvents,experimentConfig.min_per_cohort);
+  return res.json({preferences:p.rows,nodes:n.rows,edges:e.rows,researchPlans:r.rows,feedback:f.rows,skills:s.rows,skillAssessments:assessments.rows,skillApplications:applications.rows,suggestions:g.rows,agentLessons:l.rows,claimReviews:c.rows,learningEffectiveness,lessonExperiment:{...experimentConfig,results:lessonExperimentResults},domains});
  }
  if(req.method==='POST'){
   const type=String(b.type||'');
+  if(type==='lesson_experiment'){
+   if(typeof b.enabled!=='boolean')return res.status(400).json({error:'Provide an explicit enabled true/false value.'});
+   const saved=(await db.query('INSERT INTO ultron_lesson_experiments(owner_id,enabled,min_per_cohort) VALUES($1,$2,5) ON CONFLICT(owner_id) DO UPDATE SET enabled=EXCLUDED.enabled,updated_at=now() RETURNING enabled,min_per_cohort,updated_at',[owner,b.enabled])).rows[0];
+   return res.json({lessonExperiment:saved,note:b.enabled?'Opt-in experiment enabled. Only eligible research and verification steps with matching approved lessons will be assigned to treatment or control.':'Experiment disabled. Normal approved lessons will be applied to eligible future steps; existing in-flight assignments remain unchanged.'});
+  }
   if(type==='knowledge_sync'){
    const {rows}=await db.query("SELECT id,topic,summary,source_url,source_name,published_at,source_status FROM ultron_knowledge WHERE owner_id=$1 AND source_url LIKE 'https://%' AND source_status='available' ORDER BY created_at DESC LIMIT 100",[owner]);
    let linked=0;

@@ -5,7 +5,7 @@ import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRole
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
 import { analyzeSentence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
-import { createLessonObservationEvents, summarizeLessonEffectiveness } from 'lib/learning-evaluation.js';
+import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment } from 'lib/learning-evaluation.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -96,6 +96,30 @@ function testAdaptiveLearningMeasurement() {
   const small=summarizeLessonEffectiveness(events.slice(0,4),5)[0];
   const ok=summary?.attempts===5&&summary.operationallyVerified===2&&summary.unsuccessfulAttempts===3&&summary.evidenceLevel==='descriptive_only'&&summary.operationalSuccessRate===0.4&&summary.causalEffectEstablished===false&&summary.autoPromotionAllowed===false&&small?.evidenceLevel==='insufficient_evidence'&&small?.recommendation==='collect_more_observations';
   return {name:'adaptive_learning_outcome_measurement',ok,semantic:ok,detail:ok?'Only terminal observations are counted; verifier-passed and failed attempts remain distinct; small samples are marked insufficient; descriptive patterns never establish causation or auto-promote lessons.':'Adaptive learning measurement overstated its evidence or miscounted outcomes.',summary,smallSampleLevel:small?.evidenceLevel};
+}
+
+function testLessonExperimentAllocation() {
+  const lesson={id:'lesson-exp-1',lesson:'Use an alternative source after a retrieval failure.',confidence:0.8};
+  const disabled=assignLessonExperiment({enabled:false,runId:'r1',stepId:'s1',stepType:'verify_url',lessons:[lesson]});
+  const writeBlocked=assignLessonExperiment({enabled:true,runId:'r1',stepId:'s2',stepType:'create_task',lessons:[lesson]});
+  const first=assignLessonExperiment({enabled:true,runId:'r1',stepId:'s3',stepType:'verify_url',lessons:[lesson]});
+  const same=assignLessonExperiment({enabled:true,runId:'r1',stepId:'s3',stepType:'verify_url',lessons:[lesson]});
+  const buckets=new Set(Array.from({length:100},(_,i)=>assignLessonExperiment({enabled:true,runId:'r1',stepId:'step-'+i,stepType:'verify_url',lessons:[lesson]}).cohort));
+  const ok=!disabled.enabled&&!writeBlocked.eligible&&first.cohort===same.cohort&&first.eligible&&buckets.size===2&&['treatment','control'].includes(first.cohort);
+  return {name:'lesson_experiment_opt_in_allocation',ok,semantic:ok,detail:ok?'Experiment is off by default, stable per step, splits eligible read-only operation IDs across both cohorts, and excludes write operations.':'Experiment allocation violated opt-in, stability or operation-scope rules.',disabledOff:!disabled.enabled,writeOperationExcluded:!writeBlocked.eligible,stableAssignment:first.cohort===same.cohort,bothCohortsObserved:buckets.size===2};
+}
+
+function testLessonExperimentMeasurement() {
+  const assignment={enabled:true,eligible:true,experimentId:'approved_lesson_stratified_v1',stepType:'verify_url'};
+  const events=[];
+  for(let i=0;i<5;i++){
+    events.push(createExperimentObservationEvent({...assignment,cohort:'treatment'},i===2?'retryable_failure':'operationally_verified',i+1,i!==2,undefined,i===0?1:0));
+    events.push(createExperimentObservationEvent({...assignment,cohort:'control'},i===1||i===3?'failed':'operationally_verified',i+1,i!==1&&i!==3));
+  }
+  const summary=summarizeLessonExperiment(events,5)[0];
+  const small=summarizeLessonExperiment(events.slice(0,8),5)[0];
+  const ok=summary?.treatment.attempts===5&&summary.control.attempts===5&&summary.treatment.verified===4&&summary.treatment.verifierRejections===1&&summary.control.verified===3&&summary.evidenceLevel==='descriptive_comparison'&&summary.differencePercentagePoints===20&&summary.causalEffectEstablished===false&&small?.evidenceLevel==='insufficient_evidence';
+  return {name:'lesson_experiment_cohort_measurement',ok,semantic:ok,detail:ok?'Treatment and control remain separate; only verifier-passed completions count; both cohorts need the configured minimum; comparison is explicitly non-causal.':'Experiment cohort metrics were miscounted or overstated.',summary,smallSampleLevel:small?.evidenceLevel};
 }
 
 function testCancellationGuards() {
@@ -248,6 +272,8 @@ export default async function (req, res) {
   results.push(testMissionRuntimePolicies());
   results.push(testSpecialistLeaseBoundaryRecovery());
   results.push(testAdaptiveLearningMeasurement());
+  results.push(testLessonExperimentAllocation());
+  results.push(testLessonExperimentMeasurement());
   results.push(testCancellationGuards());
   results.push(testMissionGraphPolicy());
   results.push(testSpecialistRevisionPolicy());
