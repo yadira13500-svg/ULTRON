@@ -319,15 +319,16 @@ function testLabeledClaimEvidenceFixtures() {
 }
 
 function testAutonomousEvidenceRepairPlanning() {
-  const steps=[{position:1,step_type:'retrieve_source',result:{retrieved:true,url:'https://alpha.example/report',truncated:true}}];
+  const steps=[{position:1,step_type:'retrieve_source',result:{retrieved:true,url:'https://alpha.example/report',truncated:true}},{position:2,step_type:'assess_claim',result:{claim:'The project was approved in 2025.',allSources:[{url:'https://alpha.example/report'}]}}];
   const intelligence={evidence:{claims:[{position:2,claim:'The project was approved in 2025.',independentPublisherGroups:1,supportingCandidates:1,contradictingCandidates:1,conflictCount:1,conflicts:[{signal:'Opposite approval status'}]}],groups:[{group:'alpha',urls:['https://alpha.example/report']}]},specialistReview:{failedChecks:[{challenge:['Need independent source']}]}}
   const proposal=buildEvidenceRepairProposal({id:'fixture-run',title:'Fixture mission'},steps,intelligence);
   const verified=verifyEvidenceRepairProposal(proposal);
   const kinds=new Set(proposal.tasks.map(x=>x.input.repairType));
   const bounded=proposal.tasks.every(x=>x.type==='research_search'&&x.input.query.length<=300);
   const noAuto=proposal.requiresOwnerApproval===true&&proposal.automaticExecution===false;
-  const ok=verified.passed&&proposal.tasks.length>=3&&kinds.has('independent_source_gap')&&kinds.has('conflict_investigation')&&kinds.has('freshness_refresh')&&kinds.has('truncated_source_recovery')&&kinds.has('verifier_challenge_resolution')&&bounded&&noAuto;
-  return {name:'autonomous_evidence_repair_proposal_safety',ok,semantic:ok,taskCount:proposal.tasks.length,repairTypes:[...kinds],ownerApprovalRequired:noAuto,detail:ok?'Weak claims, conflicts, undated/truncated sources and verifier challenges create bounded repair searches; no execution occurs before owner approval.':'Evidence repair planning exceeded its bounded or approval-gated policy.'};
+  const claimLinkedRefresh=proposal.tasks.filter(x=>['freshness_refresh','truncated_source_recovery'].includes(x.input.repairType)).every(x=>x.input.claimPosition===2&&x.input.claim==='The project was approved in 2025.');
+  const ok=verified.passed&&proposal.tasks.length>=3&&kinds.has('independent_source_gap')&&kinds.has('conflict_investigation')&&kinds.has('freshness_refresh')&&kinds.has('truncated_source_recovery')&&kinds.has('verifier_challenge_resolution')&&bounded&&noAuto&&claimLinkedRefresh;
+  return {name:'autonomous_evidence_repair_proposal_safety',ok,semantic:ok,taskCount:proposal.tasks.length,repairTypes:[...kinds],ownerApprovalRequired:noAuto,claimLinkedRefresh,detail:ok?'Weak claims, conflicts, undated/truncated sources and verifier challenges create bounded, claim-linked repair searches; no execution occurs before owner approval.':'Evidence repair planning exceeded its bounded or approval-gated policy.'};
 }
 
 function testRepairedClaimCaptureAndAssessmentPlan() {
