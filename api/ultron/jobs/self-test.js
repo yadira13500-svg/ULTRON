@@ -311,13 +311,14 @@ function testLabeledClaimEvidenceFixtures() {
     {name:'direction_conflict',claim:'Revenue increased during 2025.',sentence:'Revenue declined during 2025.',expect:a=>a.directionConflict===true},
     {name:'hedged_claim',claim:'The treatment is effective for the condition.',sentence:'The treatment may be effective for the condition.',expect:a=>a.hedged===true},
     {name:'unrelated_passage',claim:'The council approved a transport project.',sentence:'Marine biology research advanced in deep ocean ecosystems.',expect:a=>stanceOf(a)==='not_addressed'},
-    {name:'entity_mismatch',claim:'London approved the proposal in 2025.',sentence:'Paris approved the proposal in 2025.',expect:a=>a.entityCoverage<1}
+    {name:'entity_mismatch',claim:'London approved the proposal in 2025.',sentence:'Paris approved the proposal in 2025.',expect:a=>a.entityCoverage<1&&stanceOf(a)==='not_addressed'},
+    {name:'required_date_missing',claim:'The city approved the proposal in 2025.',sentence:'The city approved the proposal after review.',expect:a=>a.dateMatch===false&&a.numberMatch===false&&stanceOf(a)==='related_unclear'}
   ];
   const evaluated=fixtures.map(f=>{const a=analyzeSentence(f.claim,f.sentence);return {name:f.name,ok:!!f.expect(a),signals:{coverage:a.coverage,entityCoverage:a.entityCoverage,polarityMismatch:a.polarityMismatch,valenceConflict:a.valenceConflict,directionConflict:a.directionConflict,numberConflict:a.numberConflict,numberMatch:a.numberMatch,hedged:a.hedged,stance:stanceOf(a)}};});
   const independent=sourceIndependence([{url:'https://alpha.example/a',publisher:'Alpha',excerpt:'The regional transit authority published a detailed annual budget and service report for public review.'},{url:'https://beta.example/b',publisher:'Beta',excerpt:'Researchers at a separate university released findings about regional transport usage and commuting patterns.'}]);
   const independentOk=independent.independentGroupCount===2;
   const ok=evaluated.every(x=>x.ok)&&independentOk;
-  return {name:'labeled_claim_evidence_evaluation',ok,semantic:ok,fixtureCount:evaluated.length,passedFixtures:evaluated.filter(x=>x.ok).length,independentOrigins:independent.independentGroupCount,detail:ok?'Eight labeled claim fixtures and a distinct-origin positive control passed. These remain heuristic screening tests, not semantic entailment.':'One or more labeled claim signals or independent-origin positive controls failed.',fixtures:evaluated};
+  return {name:'labeled_claim_evidence_evaluation',ok,semantic:ok,fixtureCount:evaluated.length,passedFixtures:evaluated.filter(x=>x.ok).length,independentOrigins:independent.independentGroupCount,detail:ok?evaluated.length+' labeled claim fixtures and a distinct-origin positive control passed. These remain heuristic screening tests, not semantic entailment.':'One or more labeled claim signals or independent-origin positive controls failed.',fixtures:evaluated};
 }
 
 function testExactClaimPassageAnchors() {

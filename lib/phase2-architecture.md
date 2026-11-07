@@ -125,4 +125,9 @@ Turn the current single-runner workflow into a coordinated team of bounded speci
 - Mission Intelligence exposes the anchored passages and source links in the mission inspector so the owner can inspect the evidence rather than relying only on aggregate counts.
 - Regression fixtures cover valid anchors, altered quote rejection, offset tampering, and the separate origin-diversity gate. The passage screen is still deterministic lexical/polarity/numeric screening, not semantic entailment or proof of factual truth; human review remains required. No paid model calls or automatic source selection.
 
+## Material claim-atom screening (v228)
+- Each selected passage now reports explicit screening checks for named entities, dates/years, quantities, negation, direction and outcome polarity, including missing required atoms.
+- A passage is not labeled supportive when a required named entity, date or quantity from the claim is absent. Contradictory polarity/direction/outcome or conflicting numbers remain contradiction candidates; hedged passages remain unclear. This deliberately favors uncertainty over unsupported support labels.
+- The mission inspector exposes these checks with the exact source passage. The checks are deterministic and conservative; they do not understand paraphrase, context, attribution or causal implication as a semantic model would. Human review remains required; no paid calls.
+
 This document records the live bounded-specialist implementation and explicitly distinguishes it from fully autonomous, model-backed specialist agents.
