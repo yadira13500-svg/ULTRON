@@ -165,4 +165,11 @@ Turn the current single-runner workflow into a coordinated team of bounded speci
 - On runner recovery, a completed step's persisted result is authoritative. If a crash occurred after the step result committed but before its execution-specialist ledger row was finalized, recovery reconciles that row to completed from the step result before expiring/requeueing any other specialist tasks. It does not rerun or rewrite the completed step.
 - New deterministic self-test fixtures verify exact replay acceptance, changed immutable input rejection across all three write types, and preservation of later lifecycle states. These are contract tests; they do not replace live database fault-injection for every storage backend boundary.
 
+## Recovery Controller (v248)
+- `lib/recovery-controller.js` evaluates a bounded state snapshot and selects one explicit action: preserve completed work, wait for a live lease or dependency, resume safe interrupted work, retry a transient failure within the attempt budget, request a plan change for permanent failures, or require owner approval for external side effects and exhausted retries.
+- Migration 026 adds an append-only, owner-scoped `ultron_recovery_events` ledger. Stable event keys make recovery decisions idempotent; each event records the action, reason, attempt and minimal state snapshot without replacing the original step result.
+- The runner records wait decisions when another specialist still owns a live lease and records per-step decisions before reopening stale running work. Only `resume` and bounded `retry` decisions return a step to pending; all other actions remain non-executing.
+- Self-test includes a decision matrix for completed-step preservation, live lease/dependency waits, safe resume, transient retry, permanent-failure replanning, exhausted retry budget and external-side-effect approval. These are deterministic policy tests; live database crash injection at every commit boundary remains separate work.
+- No paid model calls, provider credits, new external actions, existing data rewrites or visibility changes are introduced.
+
 This document records the live bounded-specialist implementation and explicitly distinguishes it from fully autonomous, model-backed specialist agents.

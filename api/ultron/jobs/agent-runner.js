@@ -7,6 +7,7 @@ import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.
 import { buildMissionCoordinationReport } from 'lib/mission-coordinator.js';
 import { createLessonObservationEvents, assignLessonExperiment, createExperimentObservationEvent, applyApprovedStrategyPolicy } from 'lib/learning-evaluation.js';
 import { matchesTaskReplay, matchesKnowledgeReplay, matchesSkillApplicationReplay } from 'lib/mission-idempotency.js';
+import { decideRecoveryAction, recoveryEventKey } from 'lib/recovery-controller.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -294,10 +295,18 @@ export default async function(req,res) {
   const activeSpecialists=(await db.query("SELECT MAX(lease_until) AS latest_lease FROM ultron_specialist_tasks WHERE run_id=$1 AND owner_id=$2 AND phase='execution' AND status='running' AND lease_until>now()",[run.id,run.owner_id])).rows[0];
   if(activeSpecialists?.latest_lease) {
     await db.query("UPDATE ultron_agent_runs SET lease_until=GREATEST($3::timestamptz,now())+interval '1 minute',updated_at=now() WHERE id=$1 AND owner_id=$2 AND status='running'",[run.id,run.owner_id,activeSpecialists.latest_lease]);
-    return res.json({ok:true,processed:false,runId:run.id,status:'running',waitingForActiveSpecialists:true,note:'A prior specialist still holds a valid execution lease. ULTRON preserved its running step and will resume only after that lease expires or the specialist completes.'});
+    const key=recoveryEventKey(run.id,null,'wait',run.attempts);
+    await db.query("INSERT INTO ultron_recovery_events(owner_id,run_id,event_key,action,reason,attempt,snapshot) VALUES($1,$2,$3,'wait',$4,$5,$6::jsonb) ON CONFLICT(owner_id,event_key) DO NOTHING",[run.owner_id,run.id,key,'A specialist still holds a valid execution lease; the controller deferred recovery.',run.attempts,JSON.stringify({latestActiveLease:activeSpecialists.latest_lease})]);
+    return res.json({ok:true,processed:false,runId:run.id,status:'running',waitingForActiveSpecialists:true,recoveryAction:'wait',note:'A prior specialist still holds a valid execution lease. ULTRON preserved its running step and will resume only after that lease expires or the specialist completes.'});
   }
-  const runningSteps=(await db.query("SELECT s.id,s.status,s.started_at,EXISTS(SELECT 1 FROM ultron_specialist_tasks t WHERE t.run_id=s.run_id AND t.owner_id=s.owner_id AND t.step_id=s.id AND t.phase='execution' AND t.status='pending') AS has_pending_execution_task,EXISTS(SELECT 1 FROM ultron_specialist_tasks t WHERE t.run_id=s.run_id AND t.owner_id=s.owner_id AND t.step_id=s.id AND t.phase='execution' AND t.status='running' AND t.lease_until>now()) AS has_active_execution_task FROM ultron_agent_steps s WHERE s.run_id=$1 AND s.owner_id=$2 AND s.status='running'",[run.id,run.owner_id])).rows;
-  for(const candidate of runningSteps) if(shouldRecoverRunningStep(candidate)) await db.query("UPDATE ultron_agent_steps SET status='pending',started_at=NULL WHERE id=$1 AND owner_id=$2 AND status='running'",[candidate.id,run.owner_id]);
+  const runningSteps=(await db.query("SELECT s.id,s.status,s.started_at,s.step_type,s.error,s.attempts,EXISTS(SELECT 1 FROM ultron_specialist_tasks t WHERE t.run_id=s.run_id AND t.owner_id=s.owner_id AND t.step_id=s.id AND t.phase='execution' AND t.status='pending') AS has_pending_execution_task,EXISTS(SELECT 1 FROM ultron_specialist_tasks t WHERE t.run_id=s.run_id AND t.owner_id=s.owner_id AND t.step_id=s.id AND t.phase='execution' AND t.status='running' AND t.lease_until>now()) AS has_active_execution_task FROM ultron_agent_steps s WHERE s.run_id=$1 AND s.owner_id=$2 AND s.status='running'",[run.id,run.owner_id])).rows;
+  for(const candidate of runningSteps) {
+    if(!shouldRecoverRunningStep(candidate)) continue;
+    const decision=decideRecoveryAction({step:candidate,activeLease:false,attempts:candidate.attempts,failure:candidate.error});
+    const key=recoveryEventKey(run.id,candidate.id,decision.action,candidate.attempts);
+    await db.query("INSERT INTO ultron_recovery_events(owner_id,run_id,step_id,event_key,action,reason,attempt,snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) ON CONFLICT(owner_id,event_key) DO NOTHING",[run.owner_id,run.id,candidate.id,key,decision.action,decision.reason,candidate.attempts,JSON.stringify({status:candidate.status,stepType:candidate.step_type,startedAt:candidate.started_at,hasPendingExecutionTask:candidate.has_pending_execution_task,hasActiveExecutionTask:candidate.has_active_execution_task})]);
+    if(decision.action==='resume'||decision.action==='retry') await db.query("UPDATE ultron_agent_steps SET status='pending',started_at=NULL WHERE id=$1 AND owner_id=$2 AND status='running'",[candidate.id,run.owner_id]);
+  }
   const steps=(await db.query("SELECT id,position,step_type,title,input,depends_on FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND status='pending' ORDER BY position LIMIT 3",[run.id,run.owner_id])).rows;
   const outcomes=await runParallel(steps,async step=>{
     const state=(await db.query("SELECT status FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];

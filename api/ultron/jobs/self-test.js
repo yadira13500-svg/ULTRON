@@ -14,6 +14,7 @@ import { buildDocumentContext } from 'lib/document-context.js';
 import { verifyOutcome } from 'lib/outcome.js';
 import { sentinelSafetySelfTest } from 'lib/sentinel-safety.js';
 import { matchesTaskReplay, matchesKnowledgeReplay, matchesSkillApplicationReplay } from 'lib/mission-idempotency.js';
+import { decideRecoveryAction, recoveryEventKey } from 'lib/recovery-controller.js';
 import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment, recommendLessonStrategies, applyApprovedStrategyPolicy, summarizeStrategyTrialOutcomes } from 'lib/learning-evaluation.js';
 
 export const access = 'scheduler';
@@ -275,6 +276,20 @@ function testSpecialistRevisionPolicy() {
   return {name:'specialist_revision_budget_and_scope',ok,semantic:ok,detail:ok?'Rejected research receives one bounded, auditable query revision; unsupported write operations and exhausted budgets are not revised.':'Specialist revision policy exceeded its scope or budget.',revisionAvailable:!!revision,queryLength:revision?.input.query.length||0,secondRevisionBlocked:!exhausted,writeOperationBlocked:!unsupported};
 }
 
+function testRecoveryControllerDecisions() {
+  const completed=decideRecoveryAction({step:{status:'completed'}});
+  const active=decideRecoveryAction({step:{status:'running'},activeLease:true});
+  const blocked=decideRecoveryAction({step:{status:'pending'},dependenciesReady:false});
+  const resume=decideRecoveryAction({step:{status:'running'}});
+  const retry=decideRecoveryAction({step:{status:'running',error:'HTTP 503'},attempts:1});
+  const replan=decideRecoveryAction({step:{status:'running',error:'HTTP 404'},attempts:1});
+  const exhausted=decideRecoveryAction({step:{status:'running',error:'timeout'},attempts:3});
+  const external=decideRecoveryAction({step:{status:'pending',step_type:'publish_content'}});
+  const keys=new Set([recoveryEventKey('r','s','resume',1),recoveryEventKey('r','s','resume',1)]);
+  const ok=completed.action==='preserve'&&active.action==='wait'&&blocked.action==='wait'&&resume.action==='resume'&&retry.action==='retry'&&replan.action==='replan'&&exhausted.action==='human_approval'&&external.action==='human_approval'&&keys.size===1;
+  return {name:'recovery_controller_decision_matrix',ok,semantic:ok,detail:ok?'Recovery controller preserves completed work, waits on active leases/dependencies, resumes safe work, retries bounded transient failures, replans permanent failures and requires approval for external effects or exhausted retries.':'Recovery controller selected an unsafe or incorrect action.',actions:{completed:completed.action,activeLease:active.action,blockedDependencies:blocked.action,resume:resume.action,transientFailure:retry.action,permanentFailure:replan.action,retryBudgetExhausted:exhausted.action,externalSideEffect:external.action},eventKeyDeduplicated:keys.size===1};
+}
+
 function testSpecialistLeaseBoundaryRecovery() {
   const now=Date.now();
   const recent=new Date(now-8*60*1000).toISOString();
@@ -491,6 +506,7 @@ export default async function (req, res) {
   results.push(testRecoveryIntelligence());
   results.push(testMissionRuntimePolicies());
   results.push(testSpecialistLeaseBoundaryRecovery());
+  results.push(testRecoveryControllerDecisions());
   results.push(testAdaptiveLearningMeasurement());
   results.push(testLessonExperimentAllocation());
   results.push(testLessonExperimentMeasurement());
