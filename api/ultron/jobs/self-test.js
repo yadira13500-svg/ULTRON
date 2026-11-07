@@ -1,3 +1,5 @@
+import { checkSourceFreshness } from 'lib/source-check.js';
+
 export const access = 'scheduler';
 export const methods = ['POST'];
 
@@ -36,9 +38,33 @@ async function probe(name, url) {
   }
 }
 
+async function testSourceFreshnessFallback() {
+  const calls = [];
+  const fakeFetch = async (url, options) => {
+    calls.push({ url, method: options.method, range: options.headers?.Range || '' });
+    if (options.method === 'HEAD') return { status: 405, headers: { get: () => null } };
+    return { status: 206, headers: { get: () => null } };
+  };
+  const result = await checkSourceFreshness('https://docs.example.org/guide', fakeFetch);
+  const fallbackUsed = calls.length === 2 && calls[0].method === 'HEAD' &&
+    calls[1].method === 'GET' && calls[1].range === 'bytes=0-0';
+  const blockedRedirect = await checkSourceFreshness('https://docs.example.org/guide', async () => ({
+    status: 302, headers: { get: key => key.toLowerCase() === 'location' ? 'http://127.0.0.1/private' : null }
+  }));
+  const redirectBlocked = blockedRedirect.status === 'redirected' && blockedRedirect.httpStatus === 302;
+  return {
+    name: 'source_freshness_fallback',
+    ok: fallbackUsed && result.status === 'available' && result.httpStatus === 206 && redirectBlocked,
+    semantic: fallbackUsed && result.status === 'available' && redirectBlocked,
+    detail: 'HEAD 405 falls back to one-byte ranged GET (206); unsafe redirect target is rejected.',
+    calls
+  };
+}
+
 export default async function (req, res) {
   const results = [];
   for (const [name, url] of Object.entries(CHECKS)) results.push(await probe(name, url));
+  results.push(await testSourceFreshnessFallback());
   const failed = results.filter(r => !r.ok);
   console.log('ULTRON self-test', JSON.stringify(results));
   if (failed.length) return res.status(500).json({ ok: false, failed, results });

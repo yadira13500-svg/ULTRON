@@ -1,5 +1,6 @@
 import { db } from 'hatchable';
 import { searchPublicWeb } from 'lib/search.js';
+import { checkSourceFreshness } from 'lib/source-check.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -98,32 +99,13 @@ export default async function(req,res) {
 
   const old=(await db.query("SELECT id,owner_id,topic,source_url FROM ultron_knowledge WHERE source_url<>'' AND (last_checked_at IS NULL OR last_checked_at < now()-interval '7 days') ORDER BY last_checked_at NULLS FIRST,created_at ASC LIMIT 8")).rows;
   for(const item of old) {
-    const u=safeUrl(item.source_url);
-    if(!u) {
+    if(!safeUrl(item.source_url)) {
       await db.query("UPDATE ultron_knowledge SET source_status='blocked',last_checked_at=now() WHERE id=$1 AND owner_id=$2",[item.id,item.owner_id]);
       continue;
     }
     try {
-      const checkHeaders={'User-Agent':'ULTRON-Research/1.0'};
-      let r=await fetch(u.toString(),{method:'HEAD',redirect:'manual',timeout_ms:8000,headers:checkHeaders});
-      if(r.status>=300&&r.status<400) {
-        const location=r.headers.get('location');
-        const next=location?safeUrl(new URL(location,u).toString()):null;
-        if(next) { u=next; r=await fetch(u.toString(),{method:'HEAD',redirect:'manual',timeout_ms:8000,headers:checkHeaders}); }
-      }
-      // Some publishers reject HEAD while serving normal GET requests. Use a one-byte ranged GET before classifying the source as failed.
-      if(r.status===405||r.status===501) {
-        r=await fetch(u.toString(),{method:'GET',redirect:'manual',timeout_ms:8000,headers:{...checkHeaders,'Range':'bytes=0-0','Accept':'text/html,text/plain,application/pdf,*/*'}});
-        if(r.status>=300&&r.status<400) {
-          const location=r.headers.get('location');
-          const next=location?safeUrl(new URL(String(location),u.toString()).toString()):null;
-          if(next) { u=next; r=await fetch(u.toString(),{method:'GET',redirect:'manual',timeout_ms:8000,headers:{...checkHeaders,'Range':'bytes=0-0','Accept':'text/html,text/plain,application/pdf,*/*'}}); }
-        }
-      }
-      let status='available';
-      if(r.status===404||r.status===410) status='unavailable';
-      else if(r.status>=300&&r.status<400) status='redirected';
-      else if(r.status>=400) status='check_failed';
+      const checked = await checkSourceFreshness(item.source_url);
+      const status = checked.status;
       await db.query('UPDATE ultron_knowledge SET source_status=$3,last_checked_at=now(),refresh_count=refresh_count+1 WHERE id=$1 AND owner_id=$2',[item.id,item.owner_id,status]);
       if(status==='unavailable'||status==='redirected') {
         const replacement=await searchPublicWeb(item.topic,'US');
