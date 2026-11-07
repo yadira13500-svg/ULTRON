@@ -3,7 +3,7 @@ import { searchPublicWeb } from 'lib/search.js';
 import { extractResearchQuery, planMission } from 'lib/mission-plan.js';
 import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
-import { analyzeSentence, stanceOf, sourceIndependence } from 'lib/claims.js';
+import { analyzeSentence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
 
 export const access = 'scheduler';
@@ -156,6 +156,22 @@ function testLabeledClaimEvidenceFixtures() {
   return {name:'labeled_claim_evidence_evaluation',ok,semantic:ok,fixtureCount:evaluated.length,passedFixtures:evaluated.filter(x=>x.ok).length,independentOrigins:independent.independentGroupCount,detail:ok?'Eight labeled claim fixtures and a distinct-origin positive control passed. These remain heuristic screening tests, not semantic entailment.':'One or more labeled claim signals or independent-origin positive controls failed.',fixtures:evaluated};
 }
 
+function testExplicitArithmeticEvaluation() {
+  const fixtures=[
+    {name:'correct_sum',input:'50 + 60 = 110',status:'evaluated',matches:true},
+    {name:'incorrect_sum',input:'50 + 60 = 120',status:'evaluated',matches:false},
+    {name:'multiplication',input:'12 * 8 = 96',status:'evaluated',matches:true},
+    {name:'percentage',input:'80 * 20% = 16',status:'evaluated',matches:true},
+    {name:'decimal_rounding',input:'1 / 3 = 0.333333333',status:'evaluated',matches:true},
+    {name:'division_by_zero',input:'10 / 0 = 0',status:'not_evaluated'},
+    {name:'ambiguous_prose',input:'The total was 50 plus 60, approximately 110.',status:'not_evaluated'},
+    {name:'different_units',input:'5 km + 300 m = 5.3',status:'not_evaluated'}
+  ];
+  const results=fixtures.map(f=>{const actual=evaluateExplicitCalculation(f.input);return {name:f.name,ok:actual.status===f.status&&(f.matches===undefined||actual.matches===f.matches),actual};});
+  const ok=results.every(x=>x.ok);
+  return {name:'explicit_arithmetic_verification',ok,semantic:ok,fixtureCount:fixtures.length,passedFixtures:results.filter(x=>x.ok).length,detail:ok?'Standalone arithmetic equalities are evaluated; incorrect results are flagged; ambiguous prose, units and division by zero are left unevaluated.':'An arithmetic fixture did not meet its expected conservative outcome.',fixtures:results};
+}
+
 function testClaimContradictionAndSourceIndependence() {
   const contradiction=analyzeSentence('The city approved the proposal in 2025.','The city rejected the proposal in 2025.');
   const sameOrigin=sourceIndependence([{url:'https://news.example.com/a',excerpt:'A sufficiently distinct report about the city budget and public services.'},{url:'https://news.example.com/b',excerpt:'A second sufficiently different article about regional public transportation.'}]);
@@ -199,6 +215,7 @@ export default async function (req, res) {
   results.push(await testClaimVerifierSourceIndependence());
   results.push(testGeneralOutcomeVerification());
   results.push(testLabeledClaimEvidenceFixtures());
+  results.push(testExplicitArithmeticEvaluation());
   results.push(testClaimContradictionAndSourceIndependence());
   results.push(await testPublicSearch());
   results.push(await testSourceFreshnessFallback());
