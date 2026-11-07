@@ -60,7 +60,19 @@ export default async function(req,res) {
     for (let i=0;i<normalized.length;i++) { const s=normalized[i]; if(s.type==='save_learning'&&s.input.source_url&&!normalized.some((v,j)=>j<i&&v.type==='retrieve_source'&&v.input.url===s.input.source_url)) return res.status(400).json({error:'Add a retrieve_source step for the same source before saving sourced learning.'}); }
     for (let i=0;i<normalized.length;i++) { const s=normalized[i]; if(s.type==='assess_claim' && (!Array.isArray(s.input.source_urls) || !s.input.source_urls.every(url=>normalized.some((v,j)=>j<i&&v.type==='retrieve_source'&&v.input.url===url)))) return res.status(400).json({error:'Capture each exact source URL before assessing a claim.'}); }
     const acceptanceCriteria=Array.isArray(body.acceptanceCriteria)?body.acceptanceCriteria.map(x=>String(x).trim().slice(0,500)).filter(Boolean).slice(0,12):[];
-    const planRecord=acceptanceCriteria.length?{steps:normalized,acceptanceCriteria,planner:body.planner||null}:normalized;
+    const allowedChecks=new Set(['search_results','sources_captured','independent_origins','contradictions_reviewed','task_persisted','knowledge_persisted','steps_completed','human_review']);
+    const rawAcceptanceChecks=Array.isArray(body.acceptanceChecks)?body.acceptanceChecks.slice(0,12):[];
+    const acceptanceChecks=[];
+    for(const item of rawAcceptanceChecks) {
+      const check=item&&typeof item==='object'&&!Array.isArray(item)?item.check||{}:{};
+      const type=String(check.type||'human_review');
+      if(!allowedChecks.has(type)) return res.status(400).json({error:'One or more acceptance checks use an unsupported type.'});
+      const normalizedCheck={type};
+      if(['search_results','sources_captured','independent_origins'].includes(type)) normalizedCheck.min=Math.max(1,Math.min(20,Number.isInteger(Number(check.min))?Number(check.min):1));
+      if(type==='steps_completed'&&STEP_TYPES.has(String(check.stepType||''))) normalizedCheck.stepType=String(check.stepType);
+      acceptanceChecks.push({text:String(item&&item.text||'Acceptance criterion').trim().slice(0,500),check:normalizedCheck});
+    }
+    const planRecord=(acceptanceCriteria.length||acceptanceChecks.length)?{steps:normalized,acceptanceCriteria,acceptanceChecks,planner:body.planner||null}:normalized;
     const run = (await db.query("INSERT INTO ultron_agent_runs(owner_id,title,objective,plan) VALUES($1,$2,$3,$4::jsonb) RETURNING id,title,objective,status,created_at",[owner,title,objective,JSON.stringify(planRecord)])).rows[0];
     for (const s of normalized) {
       await db.query('INSERT INTO ultron_agent_steps(run_id,owner_id,position,step_type,title,input,depends_on) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)',[run.id,owner,s.position,s.type,s.title,JSON.stringify(s.input),JSON.stringify(s.depends_on)]);

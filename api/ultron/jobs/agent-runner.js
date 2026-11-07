@@ -1,5 +1,6 @@
 import { db, scheduler } from 'hatchable';
 import { analyzeClaimEvidence } from 'lib/claims.js';
+import { verifyOutcome } from 'lib/outcome.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -333,7 +334,10 @@ export default async function(req,res) {
     const fullyOperationallyVerified=counts.completed>0&&counts.verified===counts.completed;
     const planData=(await db.query('SELECT plan FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2',[run.id,run.owner_id])).rows[0]?.plan;
     const acceptanceCriteria=Array.isArray(planData?.acceptanceCriteria)?planData.acceptanceCriteria:[];
-    const acceptance={count:acceptanceCriteria.length,status:acceptanceCriteria.length?'pending_owner_review':'not_defined',items:acceptanceCriteria,note:'Step operation checks do not automatically prove mission-level acceptance criteria. Review the evidence and confirm the outcome separately.'};
+    const acceptanceChecks=Array.isArray(planData?.acceptanceChecks)?planData.acceptanceChecks:acceptanceCriteria.map(text=>({text,check:{type:'human_review'}}));
+    const persistedSteps=(await db.query('SELECT step_type,status,result FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 ORDER BY position',[run.id,run.owner_id])).rows;
+    const acceptanceResult=acceptanceChecks.length?verifyOutcome(acceptanceChecks,persistedSteps):{status:'not_defined',counts:{met:0,unmet:0,needs_review:0},criteria:[],note:'No structured acceptance checks were supplied.'};
+    const acceptance={...acceptanceResult,count:acceptanceChecks.length,items:acceptanceChecks};
     const learningUsage=(await db.query("SELECT COUNT(DISTINCT step_id)::int AS steps_with_lessons,COUNT(DISTINCT lesson_id)::int AS distinct_lessons FROM (SELECT id AS step_id,jsonb_array_elements(COALESCE(result->'learningContext'->'lessonsConsulted','[]'::jsonb))->>'id' AS lesson_id FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND status='completed') q WHERE lesson_id IS NOT NULL",[run.id,run.owner_id])).rows[0]||{steps_with_lessons:0,distinct_lessons:0};
     const summary={stepsCompleted:counts.completed,stepsVerified:counts.verified,verifiedWork:fullyOperationallyVerified,verificationStatus:fullyOperationallyVerified?'operationally_verified':'partial',verificationScope:'operation_checks_only',acceptance,factualAccuracyVerified:false,learning:{stepsWithApprovedLessons:learningUsage.steps_with_lessons,distinctApprovedLessonsConsulted:learningUsage.distinct_lessons},completedAt:new Date().toISOString()};
     await db.query("UPDATE ultron_agent_runs SET status='completed',result=$3::jsonb,error='',lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2 AND status='running'",[run.id,run.owner_id,JSON.stringify(summary)]);
