@@ -74,9 +74,11 @@ function testMissionRuntimePolicies() {
   const depsReady=dependenciesSatisfied([1,2],[{position:1,status:'completed'},{position:2,status:'completed'}]);
   const retry=classifyStepFailure('HTTP 503 temporarily unavailable',1);
   const exhausted=classifyStepFailure('HTTP 503 temporarily unavailable',3);
+  const statusOnly=classifyStepFailure('HTTP 503',1);
+  const permanent=classifyStepFailure('HTTP 404',1);
   const roles=specialistRoleForStep('research_search')==='researcher'&&specialistRoleForStep('assess_claim')==='analyst'&&specialistRoleForStep('create_task')==='executor';
-  const ok=depsBlocked&&depsReady&&retry.retry&&exhausted.terminal&&roles&&MAX_SPECIALIST_CONCURRENCY===3;
-  return {name:'mission_runtime_dependency_retry_and_roles',ok,semantic:ok,detail:ok?'Dependency gating, bounded retry policy and role routing passed.':'A dependency, retry or specialist-role policy regressed.',maxParallel:MAX_SPECIALIST_CONCURRENCY};
+  const ok=depsBlocked&&depsReady&&retry.retry&&exhausted.terminal&&statusOnly.retry&&!permanent.transient&&!permanent.retry&&roles&&MAX_SPECIALIST_CONCURRENCY===3;
+  return {name:'mission_runtime_dependency_retry_and_roles',ok,semantic:ok,detail:ok?'Dependency gating, status-only transient retry, permanent-failure handling and role routing passed.':'A dependency, retry, permanent-failure or specialist-role policy regressed.',statusOnlyRetry:statusOnly.retry,permanentFailureNotRetried:!permanent.retry,maxParallel:MAX_SPECIALIST_CONCURRENCY};
 }
 
 async function testParallelExecution() {
