@@ -1,4 +1,5 @@
 import { checkSourceFreshness } from 'lib/source-check.js';
+import { searchPublicWeb } from 'lib/search.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -9,8 +10,7 @@ const CHECKS = {
   wikipedia: 'https://en.wikipedia.org/api/rest_v1/page/summary/Nairobi',
   currency: 'https://open.er-api.com/v6/latest/USD',
   news: 'https://news.google.com/rss?hl=en-KE&gl=KE&ceid=KE:en',
-  search: 'https://html.duckduckgo.com/html/?q=nairobi'
-};
+  };
 
 async function probe(name, url) {
   const t0 = Date.now();
@@ -35,6 +35,18 @@ async function probe(name, url) {
   } catch (e) {
     if (timer) clearTimeout(timer);
     return { name, ok: false, status: 0, ms: Date.now() - t0, error: String((e && e.message) || e).slice(0, 120) };
+  }
+}
+
+async function testPublicSearch() {
+  const t0=Date.now();
+  try {
+    const data=await searchPublicWeb('Nairobi Kenya city official information');
+    const results=(data.results||[]).filter(x=>x&&x.title&&String(x.url||'').startsWith('https://'));
+    const relevant=results.some(x=>(String(x.title)+' '+String(x.url)).toLowerCase().includes('nairobi'));
+    return {name:'search',ok:results.length>0&&relevant,status:200,ms:Date.now()-t0,semantic:results.length>0&&relevant,detail:relevant?'Public search returned a Nairobi-relevant web result.':'No relevant Nairobi web result was returned.',source:data.source,resultCount:results.length,example:results[0]?.url||''};
+  } catch(e) {
+    return {name:'search',ok:false,status:0,ms:Date.now()-t0,semantic:false,error:String(e?.message||e).slice(0,160)};
   }
 }
 
@@ -64,6 +76,7 @@ async function testSourceFreshnessFallback() {
 export default async function (req, res) {
   const results = [];
   for (const [name, url] of Object.entries(CHECKS)) results.push(await probe(name, url));
+  results.push(await testPublicSearch());
   results.push(await testSourceFreshnessFallback());
   const failed = results.filter(r => !r.ok);
   console.log('ULTRON self-test', JSON.stringify(results));
