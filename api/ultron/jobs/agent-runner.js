@@ -182,8 +182,12 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
     const domains=[...new Set(matches.map(x=>x.host).filter(Boolean))];
     const candidates=matches.filter(x=>x.termOverlap>=0.35&&x.matchedTerms.length>=3);
     const assessment={claim,operationVerified:true,assessmentStatus:candidates.length>=2&&domains.length>=2?'evidence_candidates_found':'insufficient_evidence',distinctHostnameCount:domains.length,sourceCount:matches.length,evidenceCandidates:candidates,allSources:matches,verified:false,verificationType:'conservative_claim_evidence_scan',method:'Deterministic term-overlap scan only. It does not infer entailment, contradiction, publisher independence, or truth. Distinct hostnames are not proof of independent publishers.',nextAction:'A human reviewer must inspect the quoted passages and source provenance before accepting or rejecting the claim.'};
-    await db.query("INSERT INTO ultron_claim_reviews(owner_id,run_id,step_id,claim_text,assessment_status,method,assessment) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) ON CONFLICT(owner_id,step_id) DO UPDATE SET claim_text=EXCLUDED.claim_text,assessment_status=EXCLUDED.assessment_status,method=EXCLUDED.method,assessment=EXCLUDED.assessment,review_status='pending',verification_state='unverified',reviewer_note='',correction='',reviewed_at=NULL",[owner,runId,step.id,claim,assessment.assessmentStatus,assessment.method,JSON.stringify(assessment)]);
-    return {...assessment,reviewRecordCreated:true,reviewStatus:'pending',lessonUses};
+    const reviewSave=await db.query("INSERT INTO ultron_claim_reviews(owner_id,run_id,step_id,claim_text,assessment_status,method,assessment) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) ON CONFLICT(owner_id,step_id) DO UPDATE SET claim_text=EXCLUDED.claim_text,assessment_status=EXCLUDED.assessment_status,method=EXCLUDED.method,assessment=EXCLUDED.assessment WHERE ultron_claim_reviews.review_status='pending' RETURNING id,review_status",[owner,runId,step.id,claim,assessment.assessmentStatus,assessment.method,JSON.stringify(assessment)]);
+    if(!reviewSave.rowCount) {
+      const existing=(await db.query('SELECT id,review_status,reviewer_note,correction FROM ultron_claim_reviews WHERE owner_id=$1 AND step_id=$2',[owner,step.id])).rows[0];
+      return {...assessment,reviewRecordCreated:false,reviewStatus:existing?.review_status||'reviewed',reviewPreserved:true,reviewerDecisionPreserved:!!existing?.reviewer_note||!!existing?.correction,lessonUses,note:'A prior human review exists for this assessment step. Its decision and rationale were preserved; a retry cannot reset it to pending.'};
+    }
+    return {...assessment,reviewRecordCreated:true,reviewStatus:reviewSave.rows[0].review_status||'pending',lessonUses};
   }
   if(step.step_type==='create_task') {
     const title=String(input.title||'').trim(), body=String(input.body||'').trim();
