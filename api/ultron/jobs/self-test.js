@@ -282,7 +282,7 @@ async function testIndependentVerifier() {
 async function testClaimVerifierSourceIndependence() {
   const passage='The council approved the project after review.';
   const urls=['https://alpha.example/a','https://beta.example/b'];
-  const reviewFor=count=>({review_status:'pending',assessment_status:'evidence_candidates_found',assessment:{sourceCount:2,independentPublisherCount:count,deepAnalysis:{independence:{independentGroupCount:count},perSource:urls.map((url,index)=>({index,url,passageId:String(index)+':0:'+passage.length,startOffset:0,endOffset:passage.length,exactQuote:passage,offsetBasis:'captured_source_excerpt_utf16'}))}}});
+  const reviewFor=count=>({review_status:'pending',assessment_status:'evidence_candidates_found',assessment:{sourceCount:2,independentPublisherCount:count,deepAnalysis:{independence:{independentGroupCount:count},perSource:urls.map((url,index)=>({index,url,passageId:String(index)+':0:'+passage.length,startOffset:0,endOffset:passage.length,exactQuote:passage,offsetBasis:'captured_source_excerpt_utf16',contextId:String(index)+':ctx:0:'+passage.length,contextExcerpt:passage,contextStartOffset:0,contextEndOffset:passage.length,contextOffsetBasis:'captured_source_excerpt_utf16'}))}}});
   const makeDb=count=>({query:async sql=>String(sql).includes('SELECT result FROM ultron_agent_steps')?({rows:urls.map(url=>({result:{url,retrieved:true,excerpt:passage}}))}):({rows:[reviewFor(count)]})});
   const step={id:'fixture-claim-step',step_type:'assess_claim',input:{claim:'The council approved the project.'}};
   const duplicateOrigins=await verifyStepResult(step,{verified:false},makeDb(1),'test-owner','test-run');
@@ -326,6 +326,18 @@ function testLabeledClaimEvidenceFixtures() {
   return {name:'labeled_claim_evidence_evaluation',ok,semantic:ok,fixtureCount:evaluated.length,passedFixtures:evaluated.filter(x=>x.ok).length,independentOrigins:independent.independentGroupCount,detail:ok?evaluated.length+' labeled claim fixtures and a distinct-origin positive control passed. These remain heuristic screening tests, not semantic entailment.':'One or more labeled claim signals or independent-origin positive controls failed.',fixtures:evaluated};
 }
 
+function testContextAwareClaimScope() {
+  const claim='The regulator approved the medicine.';
+  const sources=[
+    {url:'https://alpha.example/report',host:'alpha.example',title:'Report',publisher:'Alpha',excerpt:'The company spokesperson said:\nThe regulator approved the medicine.'},
+    {url:'https://beta.example/report',host:'beta.example',title:'Report',publisher:'Beta',excerpt:'The minister stated.\nThe project is complete.'}
+  ];
+  const attributed=analyzeClaimEvidence(claim,[sources[0]]).perSource[0];
+  const unrelated=analyzeClaimEvidence('The project is complete.',[sources[1]]).perSource[0];
+  const ok=attributed.stance==='related_unclear'&&attributed.materialAtomChecks.scope.attributed===true&&attributed.materialAtomChecks.scope.contextIncludedPreviousSentence===true&&attributed.contextExcerpt.includes('The company spokesperson said:')&&unrelated.materialAtomChecks.scope.attributed===true&&unrelated.stance==='related_unclear';
+  return {name:'context_aware_attribution_scope',ok,semantic:ok,attributionCarriedAcrossSentence:attributed.materialAtomChecks.scope.attributed,previousSentenceIncluded:attributed.materialAtomChecks.scope.contextIncludedPreviousSentence,exactQuotePreserved:attributed.exactQuote==='The regulator approved the medicine.',detail:ok?'The preceding speaker sentence is included in scope review while the selected evidence quote remains independently anchored.':'Neighboring attribution context was missed or the exact selected quote was not preserved.'};
+}
+
 function testExactClaimPassageAnchors() {
   const claim='The city approved the transit plan in 2025.';
   const sources=[
@@ -339,8 +351,10 @@ function testExactClaimPassageAnchors() {
   const invalid=verifyClaimPassageAnchors(tampered,captured,2);
   const offsetTampered=assessment.perSource.map((p,i)=>i===0?{...p,startOffset:p.startOffset+1}:p);
   const invalidOffset=verifyClaimPassageAnchors(offsetTampered,captured,2);
-  const ok=valid.passed&&valid.anchoredCount===2&&!invalid.passed&&!invalidOffset.passed&&assessment.perSource.every(p=>p.passageId&&p.offsetBasis==='captured_source_excerpt_utf16');
-  return {name:'exact_claim_passage_anchors_and_tamper_detection',ok,semantic:ok,anchored:valid.anchoredCount,quoteTamperingRejected:!invalid.passed,offsetTamperingRejected:!invalidOffset.passed,detail:ok?'Each claim passage has a stable ID and exact offsets into captured source text; altered quotes and offsets are rejected.':'Exact passage anchoring or tamper detection failed.'};
+  const contextTampered=assessment.perSource.map((p,i)=>i===0?{...p,contextExcerpt:p.contextExcerpt+' forged'}:p);
+  const invalidContext=verifyClaimPassageAnchors(contextTampered,captured,2);
+  const ok=valid.passed&&valid.anchoredCount===2&&!invalid.passed&&!invalidOffset.passed&&!invalidContext.passed&&assessment.perSource.every(p=>p.passageId&&p.offsetBasis==='captured_source_excerpt_utf16'&&p.contextId&&p.contextOffsetBasis==='captured_source_excerpt_utf16');
+  return {name:'exact_claim_passage_anchors_and_tamper_detection',ok,semantic:ok,anchored:valid.anchoredCount,quoteTamperingRejected:!invalid.passed,offsetTamperingRejected:!invalidOffset.passed,contextTamperingRejected:!invalidContext.passed,detail:ok?'Exact quote and neighboring context have stable IDs and offsets; quote, offset and context tampering are rejected.':'Exact passage/context anchoring or tamper detection failed.'};
 }
 
 function testAutonomousEvidenceRepairPlanning() {

@@ -135,4 +135,9 @@ Turn the current single-runner workflow into a coordinated team of bounded speci
 - Attributed, quoted, conditional or hedged passages are not counted as direct support by this lexical screen. The UI exposes the scope flags beside the exact quote so the reviewer can inspect who is speaking and under what conditions.
 - Added regression fixtures for attribution, conditional statements, quoted statements, missing causal links and explicit causal wording. These are conservative warning signals, not a natural-language understanding engine; context and semantic entailment remain human-review tasks.
 
+## Neighboring-sentence context verification (v230)
+- The selected evidence sentence is still scored and quoted on its own, but scope screening also inspects the immediately preceding sentence. This catches speaker/report attribution that introduces the selected sentence (for example, a preceding “the spokesperson said” line).
+- ULTRON stores separate exact quote and context-window IDs, excerpts and UTF-16 offsets. The independent verifier checks both spans against the persisted captured source text, confirms the quote is contained in the context window, and rejects quote, offset or context tampering.
+- Mission Intelligence and the mission inspector expose the exact quote and neighboring context separately. This is a one-sentence context window, not full-document comprehension; longer-range references, complex quotations, sarcasm and semantic entailment still require human review.
+
 This document records the live bounded-specialist implementation and explicitly distinguishes it from fully autonomous, model-backed specialist agents.
