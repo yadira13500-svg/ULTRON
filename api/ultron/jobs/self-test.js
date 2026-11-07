@@ -1,5 +1,6 @@
 import { checkSourceFreshness } from 'lib/source-check.js';
 import { searchPublicWeb } from 'lib/search.js';
+import { extractResearchQuery, planMission } from 'lib/mission-plan.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -36,6 +37,16 @@ async function probe(name, url) {
     if (timer) clearTimeout(timer);
     return { name, ok: false, status: 0, ms: Date.now() - t0, error: String((e && e.message) || e).slice(0, 120) };
   }
+}
+
+function testMissionPlanningRegression() {
+  const objective='Research and compare current approaches to autonomous multi-agent mission coordination, including reliability risks and evaluation methods.';
+  const query=extractResearchQuery(objective);
+  const plan=planMission(objective);
+  const queryClean=!/^and\\s+/i.test(query)&&/current approaches to autonomous multi-agent mission coordination/i.test(query);
+  const planClean=plan.steps.length>0&&plan.steps.every(step=>step.type==='research_search'&&/current approaches to autonomous multi-agent mission coordination/i.test(step.input.query));
+  const result={name:'mission_planning_natural_language',ok:queryClean&&planClean,semantic:queryClean&&planClean,detail:queryClean&&planClean?'Compound research instruction is normalized into the actual research topic.':'Planner retained conjunction/action words or produced an incorrect research query.',query,stepCount:plan.steps.length,plannerMode:plan.planner?.mode};
+  return result;
 }
 
 async function testPublicSearch() {
@@ -76,6 +87,7 @@ async function testSourceFreshnessFallback() {
 export default async function (req, res) {
   const results = [];
   for (const [name, url] of Object.entries(CHECKS)) results.push(await probe(name, url));
+  results.push(testMissionPlanningRegression());
   results.push(await testPublicSearch());
   results.push(await testSourceFreshnessFallback());
   const failed = results.filter(r => !r.ok);
