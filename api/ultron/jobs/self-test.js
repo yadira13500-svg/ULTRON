@@ -4,6 +4,7 @@ import { extractResearchQuery, planMission } from 'lib/mission-plan.js';
 import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
 import { verifyStepResult } from 'lib/specialist-verifier.js';
 import { analyzeSentence, sourceIndependence } from 'lib/claims.js';
+import { verifyOutcome } from 'lib/outcome.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -92,6 +93,15 @@ async function testIndependentVerifier() {
   return {name:'independent_verifier_seeded_defect',ok,semantic:ok,detail:ok?'Verifier rejected empty evidence and accepted a structurally valid lead without claiming factual truth.':'Verifier failed to challenge the seeded empty-result defect.',badRejected:!bad.passed,goodAccepted:good.passed};
 }
 
+function testGeneralOutcomeVerification() {
+  const checks=[{text:'Each research subtask returned a lead.',check:{type:'search_results',min:2,perStep:true}},{text:'The owner must review the conclusion.',check:{type:'human_review'}}];
+  const good=[{step_type:'research_search',status:'completed',result:{results:[{title:'A',url:'https://a.example'}]}},{step_type:'research_search',status:'completed',result:{results:[{title:'B',url:'https://b.example'}]}}];
+  const bad=[good[0],{step_type:'research_search',status:'completed',result:{results:[]}}];
+  const passed=verifyOutcome(checks,good),rejected=verifyOutcome(checks,bad);
+  const ok=passed.status==='criteria_met_pending_review'&&passed.counts.met===1&&passed.counts.needs_review===1&&rejected.status==='criteria_unmet'&&rejected.counts.unmet===1;
+  return {name:'general_outcome_verification',ok,semantic:ok,detail:ok?'Outcome verifier distinguishes met, unmet and human-review-only criteria.':'Outcome verifier failed seeded acceptance criteria.',passedStatus:passed.status,rejectedStatus:rejected.status};
+}
+
 function testClaimContradictionAndSourceIndependence() {
   const contradiction=analyzeSentence('The city approved the proposal in 2025.','The city rejected the proposal in 2025.');
   const sameOrigin=sourceIndependence([{url:'https://news.example.com/a',excerpt:'A sufficiently distinct report about the city budget and public services.'},{url:'https://news.example.com/b',excerpt:'A second sufficiently different article about regional public transportation.'}]);
@@ -130,6 +140,7 @@ export default async function (req, res) {
   results.push(testMissionRuntimePolicies());
   results.push(await testParallelExecution());
   results.push(await testIndependentVerifier());
+  results.push(testGeneralOutcomeVerification());
   results.push(testClaimContradictionAndSourceIndependence());
   results.push(await testPublicSearch());
   results.push(await testSourceFreshnessFallback());

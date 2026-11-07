@@ -1,20 +1,24 @@
 # ULTRON Phase 2 — Multi-Agent Intelligence & Delegation
-Status: architecture preparation only. Phase 2 execution remains gated on Phase 1 acceptance.
+Status: bounded specialist execution activated in v181. Full Phase 1 acceptance remains open until the physical iPhone workflow checklist is completed and broader real-world verification coverage is recorded.
 
 ## Mission
 Turn the current single-runner workflow into a coordinated team of bounded specialist agents. ULTRON remains the mission owner: it decomposes work, assigns specialists, shares only the context each task needs, reconciles results, and verifies the final outcome.
 
-## Current baseline (v179)
-- One durable mission queue and one scheduler-driven runner; seven supported operation types: research_search, verify_url, retrieve_source, assess_claim, save_learning, create_task, skill_apply.
-- Plans persist ordered steps with explicit earlier-step dependencies; the runner processes at most three pending steps per pass.
-- Four-minute run leases, stale-step recovery, bounded transient retries, cancellation, and a scheduled recovery worker are in place.
-- Task and knowledge writes use per-step idempotency keys. Skill-application writes now also persist a unique `agent_step_id` and read back the existing record on replay (migration 017), closing a duplicate-write gap after interrupted execution.
+## Current baseline (v181)
+- One durable mission queue and scheduler-driven runner; seven operation types remain supported: research_search, verify_url, retrieve_source, assess_claim, save_learning, create_task, skill_apply.
+- Independent ready steps now execute concurrently with a hard ceiling of three workers. Dependency checks still gate downstream steps; atomic pending-to-running claims prevent two workers from claiming the same step.
+- Run and specialist leases are ten minutes. Expired execution/verifier tasks and stale running steps return to pending for recovery. Transient failures use bounded retries; permanent failures remain failed. Cancellation marks queued/running steps and specialist tasks skipped.
+- Task, knowledge and skill-application writes use per-step idempotency identities and read-back checks. Skill applications have a unique `agent_step_id` (migration 017).
+- Migration 018 adds `ultron_specialist_tasks`: each mission step has a durable execution task and a separate verifier task with role, capability allowlist, input-context snapshot, status, attempts, lease, output, verification and error fields.
+- Researcher, analyst and executor roles are routed by operation type. A separate deterministic verifier module independently checks source/result shape and reads persisted task, knowledge, skill-application and claim-review records back before accepting the operation.
+- These are bounded deterministic specialist workers, not separate paid LLM instances. No model/provider generation or paid credits are used by the parallel worker path. Factual accuracy remains distinct from operation verification and still requires human review where appropriate.
 - Owner-approved lessons are loaded before matching step execution; prior 403 retrieval failures can block an unchanged retry. Candidate lessons remain reviewable and are not automatically promoted.
-- Natural-language planning remains deterministic and free of model calls. A compound-instruction regression now checks that “research and compare” extracts the actual topic.
+- Natural-language planning remains deterministic and free of model calls. The compound “research and compare” regression passes.
 - Claim analysis checks support/contradiction candidates, polarity, numbers, source grouping, freshness and provenance. These are heuristic screens, not semantic entailment or proof of truth; human review remains mandatory.
-- Outcome checks distinguish operation/persistence verification from factual verification and keep unmet or human-review criteria visible.
-- The daily self-test now includes the natural-language planning regression. The current run passed the mission-planning, free-service, search and redirect-safety checks.
-- No persistent specialist-agent registry, role-specific capability policy, parent/child delegation records, or separate independent verifier role exists yet. Phase 2 remains design-only.
+- Daily self-tests cover free-service availability, planning, dependency gating, bounded retry policy, parallel worker overlap, seeded verifier rejection, outcome criteria, contradiction signals, source grouping and redirect safety. The current v181 run passed all eleven checks.
+- Live integration test: three independent research specialists completed concurrently; each has a separate completed verifier record. A seeded empty-result specialist was correctly rejected rather than silently marked successful.
+- Fault injection: a failed third step retried successfully while the first two completed steps stayed at one attempt. An expired run/step/specialist lease was recovered; only the interrupted third step reran. Cancellation changed queued execution and verifier tasks to skipped.
+- Physical iPhone Safari acceptance remains unverified. Broader real-world tests of claim accuracy and adaptive-learning improvement also remain open; v181 does not claim full Phase 1 acceptance.
 
 ## Target specialist roles
 1. **Planner / Coordinator** — converts an objective into a bounded task graph, sets dependencies, budgets, deadlines and completion criteria. Does not mark its own work verified.
@@ -40,30 +44,30 @@ Turn the current single-runner workflow into a coordinated team of bounded speci
 - Preserve all existing runs, records, memories, secrets, provider settings, routes and project visibility.
 
 ## Phase 2 acceptance criteria
-- A mission can be decomposed into a validated DAG with explicit measurable acceptance criteria.
-- At least three specialist roles can receive separate tasks and return structured, attributable outputs.
-- Independent tasks execute concurrently within configured limits; dependent tasks respect prerequisite states.
-- Context snapshots, provenance, tool permissions, costs/usage and retries are visible in the audit trail.
-- A separate verifier detects seeded test defects (unsupported claim, missing citation, incorrect calculation, unmet acceptance criterion) and blocks final completion.
-- Recovery resumes expired leases without duplicate side effects; cancellation stops queued work safely.
-- User interface shows the coordinator, specialists, task graph, progress, evidence, blockers and final verification.
-- All Phase 2 workflows pass desktop and iPhone end-to-end tests; no paid calls occur in free mode.
+- A mission is decomposed into a validated dependency graph with explicit measurable acceptance criteria.
+- Researcher, analyst and executor tasks have separate durable execution records; every execution task has a separate verifier record with attributable output.
+- Independent tasks execute concurrently within the hard limit of three; dependent tasks wait for completed prerequisites.
+- Context snapshots, capability allowlists, attempts, leases, output, verifier findings and errors are persisted in the specialist audit ledger.
+- The deterministic verifier rejects seeded empty/malformed research output and independently reads back persisted task, knowledge, skill-application and claim-review records. Semantic challenges (unsupported claim, citation sufficiency and incorrect calculations) remain future work.
+- Recovery resumes expired leases; the injected retry test proved completed steps were not repeated, and cancellation stopped queued execution/verifier tasks.
+- Mission-graph UI, live progress visualization and richer revision-loop controls remain future work.
+- Physical iPhone end-to-end acceptance remains required. The current worker path uses deterministic free specialist logic, not paid LLM agents.
 
-## Phase 1 exit gate (must be met before Phase 2 is activated)
-- Natural-language objectives reliably produce plans without requiring the owner to manually specify every low-level step.
-- Independent claim verification goes beyond term overlap and tests support, contradiction, source independence, freshness and provenance, while retaining human review where needed.
-- Success and failure learning is evaluated for usefulness and avoids turning one-off events into broad rules.
-- Interrupted mission recovery, leases, retries, cancellation and idempotency pass deterministic fault-injection tests.
-- General outcome verification is demonstrated across research, persistence and permitted actions.
-- Complete owner-facing iPhone workflows are tested end to end.
-- Phase 1 completion is recorded only after evidence for every gate is available.
+## Remaining Phase 1 closure requirements
+- Natural-language planning regression passes; broader objective coverage still needs an evaluation set.
+- Claim analysis now checks support/contradiction signals, source grouping, freshness and provenance. It remains heuristic; test against a larger labeled claim set and retain human review.
+- Success/failure lesson promotion is owner-approved, but measurable improvement across repeated tasks still needs a controlled evaluation.
+- Server-side retry, interrupted-lease recovery, dependency gating and cancellation passed deterministic fault injection. Broader duplicate-side-effect replay tests across every write type remain required.
+- General outcome verification now has seeded met/unmet/human-review tests; add more real workflows for research, persistence and permitted actions.
+- Complete owner-facing iPhone Safari workflows have not been physically tested. Do not mark Phase 1 fully accepted until the checklist in `lib/iphone-workflow-qa.md` is completed.
+- Limited deterministic parallel specialist execution is enabled in v181. Full Phase 1 completion and any expansion to model-backed specialist agents remain gated on the remaining evidence above.
 
-## First implementation sequence after the gate
-1. Add role and capability registry with conservative defaults.
-2. Add parent/child delegation and task-graph persistence with migrations.
-3. Add coordinator dispatch, bounded parallel worker claims, lease recovery and idempotency keys.
-4. Add typed context snapshots and structured specialist result contracts.
-5. Add independent verifier and revision loop.
-6. Add mission-graph UI, audit views and fault-injection / mobile acceptance tests.
+## Next implementation sequence
+1. Add labeled evaluation fixtures for claim support, contradiction, citations, source independence and arithmetic errors.
+2. Test idempotent replay for each persisted side-effect type and measure approved-learning usefulness across repeated tasks.
+3. Build mission-graph UI with specialist roles, dependencies, progress, evidence, verifier challenges and recovery status.
+4. Add specialist revision loops: verifier rejects, producer revises within budget, verifier rechecks; cap attempts and preserve all versions.
+5. Complete physical iPhone Safari acceptance and record device/browser evidence.
+6. Only after those gates, evaluate separate model-backed specialist agents, with free-mode routing and explicit approval before any paid provider use.
 
-This document is a design baseline, not a claim that multi-agent delegation is already implemented.
+This document records the live bounded-specialist implementation and explicitly distinguishes it from fully autonomous, model-backed specialist agents.
