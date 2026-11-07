@@ -69,6 +69,7 @@ export default async function(req,res) {
       if(!allowedChecks.has(type)) return res.status(400).json({error:'One or more acceptance checks use an unsupported type.'});
       const normalizedCheck={type};
       if(['search_results','sources_captured','independent_origins'].includes(type)) normalizedCheck.min=Math.max(1,Math.min(20,Number.isInteger(Number(check.min))?Number(check.min):1));
+      if(type==='search_results'&&check.perStep===true) normalizedCheck.perStep=true;
       if(type==='steps_completed'&&STEP_TYPES.has(String(check.stepType||''))) normalizedCheck.stepType=String(check.stepType);
       acceptanceChecks.push({text:String(item&&item.text||'Acceptance criterion').trim().slice(0,500),check:normalizedCheck});
     }
