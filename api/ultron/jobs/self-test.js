@@ -329,7 +329,7 @@ function testLabeledClaimEvidenceFixtures() {
 function testContextAwareClaimScope() {
   const claim='The regulator approved the medicine.';
   const sources=[
-    {url:'https://alpha.example/report',host:'alpha.example',title:'Report',publisher:'Alpha',excerpt:'The company spokesperson said:\nThe regulator approved the medicine.'},
+    {url:'https://alpha.example/report',host:'alpha.example',title:'Report',publisher:'Alpha',excerpt:'The company spokesperson said this.\nThe regulator approved the medicine.'},
     {url:'https://beta.example/report',host:'beta.example',title:'Report',publisher:'Beta',excerpt:'The minister stated.\nThe project is complete.'}
   ];
   const attributed=analyzeClaimEvidence(claim,[sources[0]]).perSource[0];
@@ -453,6 +453,7 @@ export default async function (req, res) {
   results.push(await testClaimVerifierSourceIndependence());
   results.push(testGeneralOutcomeVerification());
   results.push(testLabeledClaimEvidenceFixtures());
+  results.push(testContextAwareClaimScope());
   results.push(testExactClaimPassageAnchors());
   results.push(testExplicitArithmeticEvaluation());
   results.push(testClaimContradictionAndSourceIndependence());
