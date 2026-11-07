@@ -1,7 +1,7 @@
 import { checkSourceFreshness } from 'lib/source-check.js';
 import { searchPublicWeb } from 'lib/search.js';
 import { extractResearchQuery, planMission } from 'lib/mission-plan.js';
-import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
+import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, shouldRecoverRunningStep, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
 import { analyzeSentence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
@@ -101,6 +101,18 @@ function testSpecialistRevisionPolicy() {
   const unsupported=buildRevisionRequest({...step,step_type:'create_task'},{results:[]},rejected,1);
   const ok=!!revision&&revision.input.query.length<=300&&revision.input.query!==step.input.query&&revision.mode==='bounded_deterministic_query_revision'&&!capped&&!exhausted&&!unsupported;
   return {name:'specialist_revision_budget_and_scope',ok,semantic:ok,detail:ok?'Rejected research receives one bounded, auditable query revision; unsupported write operations and exhausted budgets are not revised.':'Specialist revision policy exceeded its scope or budget.',revisionAvailable:!!revision,queryLength:revision?.input.query.length||0,secondRevisionBlocked:!exhausted,writeOperationBlocked:!unsupported};
+}
+
+function testSpecialistLeaseBoundaryRecovery() {
+  const now=Date.now();
+  const recent=new Date(now-8*60*1000).toISOString();
+  const stale=new Date(now-11*60*1000).toISOString();
+  const expiredLease=shouldRecoverRunningStep({status:'running',started_at:recent,has_pending_specialist_task:true},now);
+  const activeLease=shouldRecoverRunningStep({status:'running',started_at:recent,has_pending_specialist_task:false},now);
+  const staleStep=shouldRecoverRunningStep({status:'running',started_at:stale,has_pending_specialist_task:false},now);
+  const completed=shouldRecoverRunningStep({status:'completed',started_at:stale,has_pending_specialist_task:true},now);
+  const ok=expiredLease&&!activeLease&&staleStep&&!completed;
+  return {name:'specialist_lease_boundary_recovery',ok,semantic:ok,detail:ok?'An expired specialist task requeues its still-recent running step; active tasks are preserved; stale steps recover; completed steps never reopen.':'Lease-boundary recovery policy regressed.',expiredLeaseRecoversStep:expiredLease,activeTaskPreservesStep:!activeLease,staleStepRecovers:staleStep,completedStepPreserved:!completed};
 }
 
 async function testParallelExecution() {
@@ -208,6 +220,7 @@ export default async function (req, res) {
   for (const [name, url] of Object.entries(CHECKS)) results.push(await probe(name, url));
   results.push(testMissionPlanningRegression());
   results.push(testMissionRuntimePolicies());
+  results.push(testSpecialistLeaseBoundaryRecovery());
   results.push(testMissionGraphPolicy());
   results.push(testSpecialistRevisionPolicy());
   results.push(await testParallelExecution());

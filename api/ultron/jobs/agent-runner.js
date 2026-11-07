@@ -2,7 +2,7 @@ import { db, scheduler } from 'hatchable';
 import { analyzeClaimEvidence } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
 import { searchPublicWeb } from 'lib/search.js';
-import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
+import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, shouldRecoverRunningStep, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
 
 export const access = 'scheduler';
@@ -275,7 +275,8 @@ export default async function(req,res) {
   }
   if(!run) return res.json({ok:true,processed:false,note:'No eligible agent run was found.'});
   await db.query("UPDATE ultron_specialist_tasks SET status='pending',lease_until=NULL,error='Recovered after specialist lease expiry.',updated_at=now() WHERE run_id=$1 AND owner_id=$2 AND status='running' AND lease_until<now()",[run.id,run.owner_id]);
-  await db.query("UPDATE ultron_agent_steps SET status='pending' WHERE run_id=$1 AND owner_id=$2 AND status='running' AND started_at<now()-interval '10 minutes'",[run.id,run.owner_id]);
+  const runningSteps=(await db.query("SELECT s.id,s.status,s.started_at,EXISTS(SELECT 1 FROM ultron_specialist_tasks t WHERE t.run_id=s.run_id AND t.owner_id=s.owner_id AND t.step_id=s.id AND t.phase IN ('execution','verification') AND t.status='pending') AS has_pending_specialist_task FROM ultron_agent_steps s WHERE s.run_id=$1 AND s.owner_id=$2 AND s.status='running'",[run.id,run.owner_id])).rows;
+  for(const candidate of runningSteps) if(shouldRecoverRunningStep(candidate)) await db.query("UPDATE ultron_agent_steps SET status='pending',started_at=NULL WHERE id=$1 AND owner_id=$2 AND status='running'",[candidate.id,run.owner_id]);
   const steps=(await db.query("SELECT id,position,step_type,title,input,depends_on FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND status='pending' ORDER BY position LIMIT 3",[run.id,run.owner_id])).rows;
   const outcomes=await runParallel(steps,async step=>{
     const state=(await db.query("SELECT status FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
