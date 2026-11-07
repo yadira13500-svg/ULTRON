@@ -42,13 +42,18 @@ async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia')
   let nudged = false;
   const defs = Object.entries(tools).map(([name, t]) => ({ type: 'function', function: { name, description: t.description, parameters: t.inputSchema } }));
   const convo = messages.map(m => ({ role: m.role, content: String(m.content ?? '') }));
-  for (let step = 0; step < 6; step++) {
+  let useTools = true;
+  for (let step = 0; step < 7; step++) {
+    if (useTools && step >= 4) {
+      useTools = false;
+      convo.push({ role: 'user', content: 'Stop using tools now. Using what you have already gathered plus your own knowledge, give the user your best complete answer in plain language. If something is uncertain, say so briefly.' });
+    }
     let r, data, usable = false, failText = '';
     for (const model of candidates) {
       r = await fetch(P.url, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
-        body: JSON.stringify(Object.assign({ model, messages: convo, temperature: 0.6, max_tokens: voice ? 600 : 2000 }, defs.length ? { tools: defs, tool_choice: 'auto' } : {}, OA ? {} : { chat_template_kwargs: { enable_thinking: false } }))
+        body: JSON.stringify(Object.assign({ model, messages: convo, temperature: 0.6, max_tokens: voice ? 600 : 2000 }, defs.length && useTools ? { tools: defs, tool_choice: 'auto' } : {}, OA ? {} : { chat_template_kwargs: { enable_thinking: false } }))
       });
       if (r.ok) {
         data = await r.json();
