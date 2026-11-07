@@ -1,0 +1,1 @@
+ALTER TABLE ultron_skill_applications ADD COLUMN IF NOT EXISTS baseline_evidence TEXT NOT NULL DEFAULT '';

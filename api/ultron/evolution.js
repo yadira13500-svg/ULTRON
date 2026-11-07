@@ -17,7 +17,7 @@ export default async function(req,res){
    db.query('SELECT id,run_id,step_id,claim_text,assessment_status,review_status,verification_state,method,assessment,reviewer_note,correction,created_at,reviewed_at FROM ultron_claim_reviews WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner])
   ]);
   const assessments=await db.query('SELECT id,skill_id,answers,score,practical_pass,practical_evidence,reviewer_notes,status,submitted_at,reviewed_at,weak_concepts,practice_tasks,concept_results FROM ultron_skill_assessments WHERE owner_id=$1 ORDER BY submitted_at DESC LIMIT 100',[owner]);
-  const applications=await db.query('SELECT id,skill_id,run_id,task_description,metric_label,metric_direction,baseline_value,outcome_value,outcome_note,improvement_value,improvement_percent,status,created_at,measured_at FROM ultron_skill_applications WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner]);
+  const applications=await db.query('SELECT id,skill_id,run_id,task_description,metric_label,metric_direction,baseline_value,baseline_evidence,outcome_value,outcome_note,improvement_value,improvement_percent,status,created_at,measured_at FROM ultron_skill_applications WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',[owner]);
   return res.json({preferences:p.rows,nodes:n.rows,edges:e.rows,researchPlans:r.rows,feedback:f.rows,skills:s.rows,skillAssessments:assessments.rows,skillApplications:applications.rows,suggestions:g.rows,agentLessons:l.rows,claimReviews:c.rows,domains});
  }
  if(req.method==='POST'){
