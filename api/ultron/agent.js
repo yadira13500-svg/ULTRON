@@ -1,4 +1,5 @@
 import { db, scheduler } from 'hatchable';
+import { specialistRoleForStep, specialistCapabilitiesForRole } from 'lib/mission-runtime.js';
 
 export const access = 'admin';
 export const methods = ['GET','POST','PUT'];
@@ -25,7 +26,8 @@ export default async function(req,res) {
     const run = (await db.query('SELECT id,title,objective,status,plan,result,error,attempts,created_at,updated_at,started_at,completed_at FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2',[id,owner])).rows[0];
       if (!run) return res.status(404).json({error:'Agent run not found.'});
       const steps = (await db.query('SELECT id,position,step_type,title,input,depends_on,status,result,error,attempts,started_at,completed_at FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 ORDER BY position',[id,owner])).rows;
-      return res.json({run,steps});
+      const specialistTasks = (await db.query('SELECT id,step_id,phase,specialist_role,capabilities,context_snapshot,status,attempts,lease_until,output,verification,error,created_at,updated_at,completed_at FROM ultron_specialist_tasks WHERE run_id=$1 AND owner_id=$2 ORDER BY created_at,phase',[id,owner])).rows;
+      return res.json({run,steps,specialistTasks});
     }
     const runs = (await db.query('SELECT id,title,objective,status,result,error,attempts,created_at,updated_at,completed_at FROM ultron_agent_runs WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 40',[owner])).rows;
     return res.json({runs});
@@ -76,7 +78,10 @@ export default async function(req,res) {
     const planRecord=(acceptanceCriteria.length||acceptanceChecks.length)?{steps:normalized,acceptanceCriteria,acceptanceChecks,planner:body.planner||null}:normalized;
     const run = (await db.query("INSERT INTO ultron_agent_runs(owner_id,title,objective,plan) VALUES($1,$2,$3,$4::jsonb) RETURNING id,title,objective,status,created_at",[owner,title,objective,JSON.stringify(planRecord)])).rows[0];
     for (const s of normalized) {
-      await db.query('INSERT INTO ultron_agent_steps(run_id,owner_id,position,step_type,title,input,depends_on) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)',[run.id,owner,s.position,s.type,s.title,JSON.stringify(s.input),JSON.stringify(s.depends_on)]);
+      const savedStep=(await db.query('INSERT INTO ultron_agent_steps(run_id,owner_id,position,step_type,title,input,depends_on) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb) RETURNING id',[run.id,owner,s.position,s.type,s.title,JSON.stringify(s.input),JSON.stringify(s.depends_on)])).rows[0];
+      const role=specialistRoleForStep(s.type);
+      await db.query("INSERT INTO ultron_specialist_tasks(owner_id,run_id,step_id,phase,specialist_role,capabilities,context_snapshot,status) VALUES($1,$2,$3,'execution',$4,$5::jsonb,$6::jsonb,'pending') ON CONFLICT(owner_id,step_id,phase) DO NOTHING",[owner,run.id,savedStep.id,role,JSON.stringify(specialistCapabilitiesForRole(role)),JSON.stringify({position:s.position,stepType:s.type,title:s.title,input:s.input,depends_on:s.depends_on})]);
+      await db.query("INSERT INTO ultron_specialist_tasks(owner_id,run_id,step_id,phase,specialist_role,capabilities,context_snapshot,status) VALUES($1,$2,$3,'verification','verifier',$4::jsonb,$5::jsonb,'pending') ON CONFLICT(owner_id,step_id,phase) DO NOTHING",[owner,run.id,savedStep.id,JSON.stringify(specialistCapabilitiesForRole('verifier')),JSON.stringify({position:s.position,targetStepId:savedStep.id,targetRole:role,verificationContract:'independent_operation_evidence_review'})]);
     }
     try {
       await scheduler.now('/api/ultron/jobs/agent-runner',{runId:run.id});
@@ -93,11 +98,13 @@ export default async function(req,res) {
     const r=await db.query("UPDATE ultron_agent_runs SET status='cancelled',lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2 AND status IN ('queued','running') RETURNING id,status",[id,owner]);
     if (!r.rows.length) return res.status(409).json({error:'This run is not cancellable.'});
     await db.query("UPDATE ultron_agent_steps SET status='skipped' WHERE run_id=$1 AND owner_id=$2 AND status IN ('pending','running')",[id,owner]);
+    await db.query("UPDATE ultron_specialist_tasks SET status='skipped',lease_until=NULL,updated_at=now(),completed_at=now() WHERE run_id=$1 AND owner_id=$2 AND status IN ('pending','running')",[id,owner]);
     return res.json({ok:true,run:r.rows[0]});
   }
   const r=await db.query("UPDATE ultron_agent_runs SET status='queued',error='',lease_until=NULL,completed_at=NULL,updated_at=now() WHERE id=$1 AND owner_id=$2 AND status IN ('failed','cancelled') RETURNING id",[id,owner]);
   if (!r.rows.length) return res.status(409).json({error:'Only failed or cancelled runs can be retried.'});
   await db.query("UPDATE ultron_agent_steps SET status='pending',error='',result='{}'::jsonb,started_at=NULL,completed_at=NULL WHERE run_id=$1 AND owner_id=$2 AND status IN ('failed','skipped')",[id,owner]);
+  await db.query("UPDATE ultron_specialist_tasks SET status='pending',error='',output='{}'::jsonb,verification='{}'::jsonb,lease_until=NULL,updated_at=now(),completed_at=NULL WHERE run_id=$1 AND owner_id=$2 AND status IN ('failed','skipped')",[id,owner]);
   try { await scheduler.now('/api/ultron/jobs/agent-runner',{runId:id}); }
   catch (e) { return res.status(202).json({ok:true,status:'queued',workerQueued:false}); }
   return res.status(202).json({ok:true,status:'queued',workerQueued:true});

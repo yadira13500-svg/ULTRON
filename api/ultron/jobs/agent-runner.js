@@ -2,6 +2,8 @@ import { db, scheduler } from 'hatchable';
 import { analyzeClaimEvidence } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
 import { searchPublicWeb } from 'lib/search.js';
+import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
+import { verifyStepResult } from 'lib/specialist-verifier.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -264,7 +266,7 @@ export default async function(req,res) {
   const requested=String(req.body?.runId||'');
   let run;
   if(requested) {
-    run=(await db.query("UPDATE ultron_agent_runs SET status='running',attempts=attempts+1,lease_until=now()+interval '4 minutes',started_at=COALESCE(started_at,now()),updated_at=now() WHERE id=$1 AND status='queued' RETURNING id,owner_id,title,objective,status,attempts",[requested])).rows[0];
+    run=(await db.query("UPDATE ultron_agent_runs SET status='running',attempts=attempts+1,lease_until=now()+interval '10 minutes',started_at=COALESCE(started_at,now()),updated_at=now() WHERE id=$1 AND status='queued' RETURNING id,owner_id,title,objective,status,attempts",[requested])).rows[0];
     if(!run) {
       run=(await db.query("UPDATE ultron_agent_runs SET attempts=attempts+1,lease_until=now()+interval '4 minutes',updated_at=now() WHERE id=$1 AND status='running' AND lease_until<now() RETURNING id,owner_id,title,objective,status,attempts",[requested])).rows[0];
     }
@@ -272,47 +274,60 @@ export default async function(req,res) {
     run=(await db.query("UPDATE ultron_agent_runs SET status='running',attempts=attempts+1,lease_until=now()+interval '4 minutes',started_at=COALESCE(started_at,now()),updated_at=now() WHERE id=(SELECT id FROM ultron_agent_runs WHERE status='queued' OR (status='running' AND lease_until<now()) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id,owner_id,title,objective,status,attempts")).rows[0];
   }
   if(!run) return res.json({ok:true,processed:false,note:'No eligible agent run was found.'});
-  await db.query("UPDATE ultron_agent_steps SET status='pending' WHERE run_id=$1 AND owner_id=$2 AND status='running' AND started_at<now()-interval '4 minutes'",[run.id,run.owner_id]);
+  await db.query("UPDATE ultron_specialist_tasks SET status='pending',lease_until=NULL,error='Recovered after specialist lease expiry.',updated_at=now() WHERE run_id=$1 AND owner_id=$2 AND status='running' AND lease_until<now()",[run.id,run.owner_id]);
+  await db.query("UPDATE ultron_agent_steps SET status='pending' WHERE run_id=$1 AND owner_id=$2 AND status='running' AND started_at<now()-interval '10 minutes'",[run.id,run.owner_id]);
   const steps=(await db.query("SELECT id,position,step_type,title,input,depends_on FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND status='pending' ORDER BY position LIMIT 3",[run.id,run.owner_id])).rows;
-  let completed=0, failed=0;
-  for(const step of steps) {
+  const outcomes=await runParallel(steps,async step=>{
     const state=(await db.query("SELECT status FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
-    if(!state||state.status==='cancelled') break;
+    if(!state||state.status==='cancelled')return {kind:'skipped',step};
     const dependencies=Array.isArray(step.depends_on)?step.depends_on:[];
     if(dependencies.length) {
       const prerequisiteRows=(await db.query("SELECT position,status FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND position=ANY($3::int[])",[run.id,run.owner_id,dependencies])).rows;
-      if(prerequisiteRows.length!==dependencies.length||prerequisiteRows.some(x=>x.status!=='completed')) continue;
+      if(!dependenciesSatisfied(dependencies,prerequisiteRows))return {kind:'skipped',step};
     }
     const claim=await db.query("UPDATE ultron_agent_steps SET status='running',attempts=attempts+1,started_at=now(),error='' WHERE id=$1 AND owner_id=$2 AND status='pending' RETURNING id,attempts",[step.id,run.owner_id]);
-    if(!claim.rows.length) continue;
+    if(!claim.rows.length)return {kind:'skipped',step};
+    const role=specialistRoleForStep(step.step_type);
+    await db.query("INSERT INTO ultron_specialist_tasks(owner_id,run_id,step_id,phase,specialist_role,capabilities,context_snapshot,status) VALUES($1,$2,$3,'execution',$4,$5::jsonb,$6::jsonb,'pending') ON CONFLICT(owner_id,step_id,phase) DO NOTHING",[run.owner_id,run.id,step.id,role,JSON.stringify(specialistCapabilitiesForRole(role)),JSON.stringify({position:step.position,stepType:step.step_type,title:step.title,input:step.input||{},depends_on:step.depends_on||[]})]);
+    await db.query("INSERT INTO ultron_specialist_tasks(owner_id,run_id,step_id,phase,specialist_role,capabilities,context_snapshot,status) VALUES($1,$2,$3,'verification','verifier',$4::jsonb,$5::jsonb,'pending') ON CONFLICT(owner_id,step_id,phase) DO NOTHING",[run.owner_id,run.id,step.id,JSON.stringify(specialistCapabilitiesForRole('verifier')),JSON.stringify({position:step.position,targetStepId:step.id,targetRole:role,verificationContract:'independent_operation_evidence_review'})]);
+    const executionTask=(await db.query("UPDATE ultron_specialist_tasks SET status='running',attempts=attempts+1,lease_until=now()+interval '10 minutes',error='',updated_at=now() WHERE owner_id=$1 AND step_id=$2 AND phase='execution' AND status IN ('pending','running') RETURNING id",[run.owner_id,step.id])).rows[0];
+    if(!executionTask){await db.query("UPDATE ultron_agent_steps SET status='pending',started_at=NULL WHERE id=$1 AND owner_id=$2 AND status='running'",[step.id,run.owner_id]);return {kind:'skipped',step,note:'Specialist execution task was not claimable.'};}
     try {
       const approvedLessons=(await db.query("SELECT id,lesson,confidence,evidence FROM ultron_agent_lessons WHERE owner_id=$1 AND status='approved' AND evidence->>'stepType'=$2 ORDER BY reviewed_at DESC LIMIT 3",[run.owner_id,step.step_type])).rows;
       const result=await executeStep(step,run.owner_id,run.id,approvedLessons);
+      const verifierTask=(await db.query("UPDATE ultron_specialist_tasks SET status='running',attempts=attempts+1,lease_until=now()+interval '10 minutes',error='',updated_at=now() WHERE owner_id=$1 AND step_id=$2 AND phase='verification' AND status IN ('pending','running') RETURNING id",[run.owner_id,step.id])).rows[0];
+      if(!verifierTask)throw new Error('Independent verifier task could not be claimed.');
+      const independentVerification=await verifyStepResult(step,result,db,run.owner_id,run.id);
+      await db.query("UPDATE ultron_specialist_tasks SET status=$3,verification=$4::jsonb,lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2",[verifierTask.id,run.owner_id,independentVerification.passed?'completed':'failed',JSON.stringify(independentVerification)]);
+      if(!independentVerification.passed)throw new Error('Independent verifier rejected '+role+' output: '+independentVerification.challenge.join('; '));
+      result.specialist={role,worker:'bounded_deterministic_specialist',parallelBatchLimit:MAX_SPECIALIST_CONCURRENCY,executionTaskId:executionTask.id,verifierTaskId:verifierTask.id};
+      result.independentVerification=independentVerification;
       result.learningContext={source:'owner_approved_lessons',timing:'loaded_before_execution',scope:'matching_step_type_only',lessonsConsulted:approvedLessons.map(x=>({id:x.id,lesson:String(x.lesson||'').slice(0,1200),confidence:Number(x.confidence||0)})),count:approvedLessons.length,applied:result.lessonUses||[],note:'Lessons are fallible owner-approved experience. They inform bounded operational safeguards; they never override user instructions or establish factual truth.'};
       delete result.lessonUses;
-      await db.query("UPDATE ultron_agent_steps SET status='completed',result=$3::jsonb,completed_at=now(),error='' WHERE id=$1 AND owner_id=$2",[step.id,run.owner_id,JSON.stringify(result)]);
-      completed++;
+      const saved=await db.query("UPDATE ultron_agent_steps SET status='completed',result=$3::jsonb,completed_at=now(),error='' WHERE id=$1 AND owner_id=$2 AND status='running' RETURNING id",[step.id,run.owner_id,JSON.stringify(result)]);
+      if(!saved.rows.length)return {kind:'skipped',step,note:'Step state changed before completion was committed.'};
+      await db.query("UPDATE ultron_specialist_tasks SET status='completed',output=$3::jsonb,lease_until=NULL,error='',updated_at=now(),completed_at=now() WHERE owner_id=$1 AND step_id=$2 AND phase='execution'",[run.owner_id,step.id,JSON.stringify(result)]);
+      return {kind:'completed',step,role};
     } catch(e) {
-      const message=String(e?.message||e).slice(0,500);
-      const attempt=Number(claim.rows[0]?.attempts||1);
-      const transient=/\b(408|425|429|500|502|503|504)\b|timeout|temporarily unavailable|network|fetch failed|ECONNRESET|ETIMEDOUT|socket hang up/i.test(message);
-      if(transient&&attempt<3) {
-        await db.query("UPDATE ultron_agent_steps SET status='pending',error=$3,started_at=NULL WHERE id=$1 AND owner_id=$2",[step.id,run.owner_id,'Transient failure on attempt '+attempt+': '+message]);
-        await db.query("UPDATE ultron_agent_runs SET status='queued',error=$3,lease_until=NULL,updated_at=now() WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id,'Retrying transient step failure: '+message]);
-        try {
-          await scheduler.at(new Date(Date.now()+60000),ROUTE,{payload:{runId:run.id},name:'ultron-agent-retry-'+run.id+'-'+attempt});
-          return res.json({ok:true,runId:run.id,status:'queued',retryScheduled:true,attempt,nextAttempt:attempt+1,note:'A transient service failure was detected. ULTRON will retry this step without repeating completed steps.'});
-        } catch {
-          return res.json({ok:true,runId:run.id,status:'queued',retryScheduled:false,attempt,nextAttempt:attempt+1,note:'Retry remains queued for the hourly recovery worker.'});
-        }
+      const message=String(e?.message||e).slice(0,500),attempt=Number(claim.rows[0]?.attempts||1),disposition=classifyStepFailure(message,attempt);
+      if(disposition.retry) {
+        await db.query("UPDATE ultron_agent_steps SET status='pending',error=$3,started_at=NULL WHERE id=$1 AND owner_id=$2 AND status='running'",[step.id,run.owner_id,'Transient failure on attempt '+attempt+': '+message]);
+        await db.query("UPDATE ultron_specialist_tasks SET status='pending',lease_until=NULL,error=$3,updated_at=now() WHERE owner_id=$1 AND step_id=$2 AND phase IN ('execution','verification') AND status='running'",[run.owner_id,step.id,'Transient failure on attempt '+attempt+': '+message]);
+        return {kind:'retry',step,attempt,message};
       }
-      await db.query("UPDATE ultron_agent_steps SET status='failed',error=$3,completed_at=now() WHERE id=$1 AND owner_id=$2",[step.id,run.owner_id,message]);
-      await db.query("UPDATE ultron_agent_runs SET status='failed',error=$3,lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id,'Step '+step.position+' failed: '+message]);
-      if(!message.startsWith('Approved learning blocked an unchanged retry:')) await db.query("INSERT INTO ultron_agent_lessons(owner_id,lesson_key,lesson,evidence,confidence,status) VALUES($1,$2,$3,$4::jsonb,0.65,'candidate') ON CONFLICT(owner_id,lesson_key) DO NOTHING",[run.owner_id,run.id+':'+step.position,'Observed failure pattern: the '+String(step.step_type)+' step "'+String(step.title).slice(0,140)+'" failed. Review the recorded error and adjust the plan or inputs before retrying; do not assume the same attempt will succeed.',JSON.stringify({runId:run.id,stepId:step.id,position:step.position,stepType:step.step_type,status:'failed',verified:false,error:message,input:step.input||{}})]);
-      failed++;
-      break;
+      await db.query("UPDATE ultron_specialist_tasks SET status='failed',lease_until=NULL,error=$3,updated_at=now(),completed_at=now() WHERE owner_id=$1 AND step_id=$2 AND phase IN ('execution','verification') AND status='running'",[run.owner_id,step.id,message]);
+      await db.query("UPDATE ultron_agent_steps SET status='failed',error=$3,completed_at=now() WHERE id=$1 AND owner_id=$2 AND status='running'",[step.id,run.owner_id,message]);
+      if(!message.startsWith('Approved learning blocked an unchanged retry:'))await db.query("INSERT INTO ultron_agent_lessons(owner_id,lesson_key,lesson,evidence,confidence,status) VALUES($1,$2,$3,$4::jsonb,0.65,'candidate') ON CONFLICT(owner_id,lesson_key) DO NOTHING",[run.owner_id,run.id+':'+step.position,'Observed failure pattern: the '+String(step.step_type)+' step "'+String(step.title).slice(0,140)+'" failed. Review the recorded error and adjust the plan or inputs before retrying; do not assume the same attempt will succeed.',JSON.stringify({runId:run.id,stepId:step.id,position:step.position,stepType:step.step_type,status:'failed',verified:false,error:message,input:step.input||{}})]);
+      return {kind:'failed',step,message};
     }
-  }
+  },MAX_SPECIALIST_CONCURRENCY);
+  const completed=outcomes.filter(x=>x.kind==='completed').length,failed=outcomes.filter(x=>x.kind==='failed').length;
+  const retry=outcomes.find(x=>x.kind==='retry'),failure=outcomes.find(x=>x.kind==='failed');
+  const afterBatch=(await db.query("SELECT status FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
+  if(afterBatch?.status==='cancelled')return res.json({ok:true,runId:run.id,status:'cancelled',completedSteps:completed});
+  if(failure){const message='Step '+failure.step.position+' failed: '+failure.message;await db.query("UPDATE ultron_agent_runs SET status='failed',error=$3,lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2 AND status='running'",[run.id,run.owner_id,message]);}
+  if(retry&&!failure){await db.query("UPDATE ultron_agent_runs SET status='queued',error=$3,lease_until=NULL,updated_at=now() WHERE id=$1 AND owner_id=$2 AND status='running'",[run.id,run.owner_id,'Retrying transient specialist failure: '+retry.message]);try{await scheduler.at(new Date(Date.now()+60000),ROUTE,{payload:{runId:run.id},name:'ultron-agent-retry-'+run.id+'-'+retry.attempt});return res.json({ok:true,runId:run.id,status:'queued',retryScheduled:true,completedSteps:completed,attempt:retry.attempt,nextAttempt:retry.attempt+1,note:'Other independent specialists completed; only the transiently failed task is queued for retry.'});}catch{return res.json({ok:true,runId:run.id,status:'queued',retryScheduled:false,completedSteps:completed,note:'Retry remains queued for the hourly recovery worker.'});}}
+  if(failure)return res.json({ok:false,runId:run.id,status:'failed',completedSteps:completed,failedSteps:failed});
   const current=(await db.query("SELECT status FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
   if(current?.status==='cancelled') return res.json({ok:true,runId:run.id,status:'cancelled',completedSteps:completed});
   if(current?.status==='failed') return res.json({ok:false,runId:run.id,status:'failed',completedSteps:completed,failedSteps:failed});
