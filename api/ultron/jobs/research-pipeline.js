@@ -104,11 +104,21 @@ export default async function(req,res) {
       continue;
     }
     try {
-      let r=await fetch(u.toString(),{method:'HEAD',redirect:'manual',timeout_ms:8000,headers:{'User-Agent':'ULTRON-Research/1.0'}});
+      const checkHeaders={'User-Agent':'ULTRON-Research/1.0'};
+      let r=await fetch(u.toString(),{method:'HEAD',redirect:'manual',timeout_ms:8000,headers:checkHeaders});
       if(r.status>=300&&r.status<400) {
         const location=r.headers.get('location');
         const next=location?safeUrl(new URL(location,u).toString()):null;
-        if(next) r=await fetch(next.toString(),{method:'HEAD',redirect:'manual',timeout_ms:8000,headers:{'User-Agent':'ULTRON-Research/1.0'}});
+        if(next) { u=next; r=await fetch(u.toString(),{method:'HEAD',redirect:'manual',timeout_ms:8000,headers:checkHeaders}); }
+      }
+      // Some publishers reject HEAD while serving normal GET requests. Use a one-byte ranged GET before classifying the source as failed.
+      if(r.status===405||r.status===501) {
+        r=await fetch(u.toString(),{method:'GET',redirect:'manual',timeout_ms:8000,headers:{...checkHeaders,'Range':'bytes=0-0','Accept':'text/html,text/plain,application/pdf,*/*'}});
+        if(r.status>=300&&r.status<400) {
+          const location=r.headers.get('location');
+          const next=location?safeUrl(new URL(String(location),u.toString()).toString()):null;
+          if(next) { u=next; r=await fetch(u.toString(),{method:'GET',redirect:'manual',timeout_ms:8000,headers:{...checkHeaders,'Range':'bytes=0-0','Accept':'text/html,text/plain,application/pdf,*/*'}}); }
+        }
       }
       let status='available';
       if(r.status===404||r.status===410) status='unavailable';
