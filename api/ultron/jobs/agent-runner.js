@@ -307,7 +307,7 @@ export default async function(req,res) {
         const experimentConfig=(await db.query("SELECT enabled FROM ultron_lesson_experiments WHERE owner_id=$1",[run.owner_id])).rows[0];
         experimentAssignment=assignLessonExperiment({enabled:experimentConfig?.enabled===true,runId:run.id,stepId:step.id,stepType:step.step_type,lessons:approvedLessons});
       }
-      effectiveLessons=experimentAssignment.enabled&&experimentAssignment.cohort==='control'?[]:approvedLessons;
+      effectiveLessons=experimentAssignment.enabled?(experimentAssignment.cohort==='control'?[]:approvedLessons.filter(x=>(experimentAssignment.lessonIds||[]).includes(String(x.id)))):approvedLessons;
       const startedObservations=createLessonObservationEvents(effectiveLessons,'started',claim.rows[0].attempts,step.step_type);
       await db.query("UPDATE ultron_specialist_tasks SET context_snapshot=COALESCE(context_snapshot,'{}'::jsonb)||jsonb_build_object('lessonExperiment',$3::jsonb),updated_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND EXISTS(SELECT 1 FROM ultron_agent_runs WHERE id=$4 AND owner_id=$2 AND status='running')",[executionTask.id,run.owner_id,JSON.stringify(experimentAssignment),run.id]);
       if(startedObservations.length) await db.query("UPDATE ultron_specialist_tasks SET context_snapshot=jsonb_set(COALESCE(context_snapshot,'{}'::jsonb),'{lessonObservations}',COALESCE(context_snapshot->'lessonObservations','[]'::jsonb)||$3::jsonb,true),updated_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND EXISTS(SELECT 1 FROM ultron_agent_runs WHERE id=$4 AND owner_id=$2 AND status='running')",[executionTask.id,run.owner_id,JSON.stringify(startedObservations),run.id]);

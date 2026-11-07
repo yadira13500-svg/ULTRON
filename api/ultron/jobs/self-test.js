@@ -104,9 +104,11 @@ function testLessonExperimentAllocation() {
   const writeBlocked=assignLessonExperiment({enabled:true,runId:'r1',stepId:'s2',stepType:'create_task',lessons:[lesson]});
   const first=assignLessonExperiment({enabled:true,runId:'r1',stepId:'s3',stepType:'verify_url',lessons:[lesson]});
   const same=assignLessonExperiment({enabled:true,runId:'r1',stepId:'s3',stepType:'verify_url',lessons:[lesson]});
-  const buckets=new Set(Array.from({length:100},(_,i)=>assignLessonExperiment({enabled:true,runId:'r1',stepId:'step-'+i,stepType:'verify_url',lessons:[lesson]}).cohort));
-  const ok=!disabled.enabled&&!writeBlocked.eligible&&first.cohort===same.cohort&&first.eligible&&buckets.size===2&&['treatment','control'].includes(first.cohort);
-  return {name:'lesson_experiment_opt_in_allocation',ok,semantic:ok,detail:ok?'Experiment is off by default, stable per step, splits eligible read-only operation IDs across both cohorts, and excludes write operations.':'Experiment allocation violated opt-in, stability or operation-scope rules.',disabledOff:!disabled.enabled,writeOperationExcluded:!writeBlocked.eligible,stableAssignment:first.cohort===same.cohort,bothCohortsObserved:buckets.size===2};
+  const counts={treatment:0,control:0};
+  for(let i=0;i<100;i++)counts[assignLessonExperiment({enabled:true,runId:'r1',stepId:'step-'+i,stepType:'verify_url',lessons:[lesson]}).cohort]++;
+  const balanced=counts.treatment>=35&&counts.treatment<=65&&counts.control>=35&&counts.control<=65;
+  const ok=!disabled.enabled&&!writeBlocked.eligible&&first.cohort===same.cohort&&first.eligible&&balanced&&['treatment','control'].includes(first.cohort);
+  return {name:'lesson_experiment_opt_in_allocation',ok,semantic:ok,detail:ok?'Experiment is off by default, stable per step, splits eligible read-only operation IDs across both cohorts, and excludes write operations.':'Experiment allocation violated opt-in, stability or operation-scope rules.',disabledOff:!disabled.enabled,writeOperationExcluded:!writeBlocked.eligible,stableAssignment:first.cohort===same.cohort,balancedAllocation:balanced,treatmentAllocation:counts.treatment,controlAllocation:counts.control};
 }
 
 function testLessonExperimentMeasurement() {
