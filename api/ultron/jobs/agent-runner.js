@@ -1,4 +1,5 @@
 import { db, scheduler } from 'hatchable';
+import { analyzeClaimEvidence } from 'lib/claims.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -212,6 +213,14 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
     }
     const candidates=matches.filter(x=>x.termOverlap>=0.35&&x.matchedTerms.length>=3);
     const assessment={claim,operationVerified:true,assessmentStatus:candidates.length>=2&&independentPublisherCount>=2?'evidence_candidates_found':'insufficient_evidence',distinctHostnameCount:domains.length,independentPublisherCount,sourceCount:matches.length,evidenceCandidates:candidates,allSources:matches,sourceIndependence:{publisherGroups:[...sourceGroups.entries()].map(([publisher,urls])=>({publisher,sourceCount:urls.length,urls})),note:'Publisher labels and registrable domains are heuristic signals, not proof of editorial independence or ownership.'},contradictionCandidates,verified:false,verificationType:'independent_source_and_contradiction_screen',method:'Deterministic evidence screen: claim-term overlap, publisher/domain grouping, excerpt similarity, and possible polarity/numeric conflicts. It does not establish entailment, causation, or truth; contradiction candidates require human inspection.',nextAction:'Inspect each quoted passage, publisher ownership, original reporting versus syndication, dates, and possible contradiction candidates. A human reviewer must decide.'};
+    const deep=analyzeClaimEvidence(claim,evidence);
+    assessment.deepAnalysis=deep;
+    assessment.assessmentStatus=deep.status;
+    assessment.independentPublisherCount=deep.independence.independentGroupCount;
+    assessment.verificationType='independent_source_contradiction_freshness_screen';
+    assessment.contradictionCandidates=[...assessment.contradictionCandidates,...deep.perSource.filter(x=>x.stance==='contradicts_candidate').map(x=>({source:x.url,excerpt:x.excerpt,signals:x.signals,reviewRequired:true}))];
+    assessment.method='Deterministic evidence screen: per-source stance (supports / contradicts / unclear), negation, direction and number conflicts, source-independence grouping (shared domain, publisher, canonical page, copied phrasing, common wire attribution), freshness and provenance. It does not establish entailment, causation or truth; a human reviewer decides.';
+    assessment.nextAction=deep.reasons.length?deep.reasons.join(' ')+' Inspect each quoted passage and decide.':'Inspect each quoted passage, original reporting versus syndication, dates and any contradiction candidates. A human reviewer must decide.';
     const reviewSave=await db.query("INSERT INTO ultron_claim_reviews(owner_id,run_id,step_id,claim_text,assessment_status,method,assessment) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) ON CONFLICT(owner_id,step_id) DO UPDATE SET claim_text=EXCLUDED.claim_text,assessment_status=EXCLUDED.assessment_status,method=EXCLUDED.method,assessment=EXCLUDED.assessment WHERE ultron_claim_reviews.review_status='pending' RETURNING id,review_status",[owner,runId,step.id,claim,assessment.assessmentStatus,assessment.method,JSON.stringify(assessment)]);
     if(!reviewSave.rowCount) {
       const existing=(await db.query('SELECT id,review_status,reviewer_note,correction FROM ultron_claim_reviews WHERE owner_id=$1 AND step_id=$2',[owner,step.id])).rows[0];
