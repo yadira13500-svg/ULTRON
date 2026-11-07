@@ -4,13 +4,17 @@ Status: architecture preparation only. Phase 2 execution remains gated on Phase 
 ## Mission
 Turn the current single-runner workflow into a coordinated team of bounded specialist agents. ULTRON remains the mission owner: it decomposes work, assigns specialists, shares only the context each task needs, reconciles results, and verifies the final outcome.
 
-## Current baseline (v160)
-- One durable mission queue and one scheduler-driven runner.
-- Seven linear step types: research_search, verify_url, retrieve_source, assess_claim, save_learning, create_task, skill_apply.
-- Step dependencies are earlier-position references; the runner processes up to three pending steps per pass.
-- Owner-approved lessons are loaded before matching step execution.
-- Results distinguish operation verification from factual verification.
-- No persistent specialist-agent registry, role-specific capability policy, parent/child delegation records, or independent verifier role exists yet.
+## Current baseline (v179)
+- One durable mission queue and one scheduler-driven runner; seven supported operation types: research_search, verify_url, retrieve_source, assess_claim, save_learning, create_task, skill_apply.
+- Plans persist ordered steps with explicit earlier-step dependencies; the runner processes at most three pending steps per pass.
+- Four-minute run leases, stale-step recovery, bounded transient retries, cancellation, and a scheduled recovery worker are in place.
+- Task and knowledge writes use per-step idempotency keys. Skill-application writes now also persist a unique `agent_step_id` and read back the existing record on replay (migration 017), closing a duplicate-write gap after interrupted execution.
+- Owner-approved lessons are loaded before matching step execution; prior 403 retrieval failures can block an unchanged retry. Candidate lessons remain reviewable and are not automatically promoted.
+- Natural-language planning remains deterministic and free of model calls. A compound-instruction regression now checks that “research and compare” extracts the actual topic.
+- Claim analysis checks support/contradiction candidates, polarity, numbers, source grouping, freshness and provenance. These are heuristic screens, not semantic entailment or proof of truth; human review remains mandatory.
+- Outcome checks distinguish operation/persistence verification from factual verification and keep unmet or human-review criteria visible.
+- The daily self-test now includes the natural-language planning regression. The current run passed the mission-planning, free-service, search and redirect-safety checks.
+- No persistent specialist-agent registry, role-specific capability policy, parent/child delegation records, or separate independent verifier role exists yet. Phase 2 remains design-only.
 
 ## Target specialist roles
 1. **Planner / Coordinator** — converts an objective into a bounded task graph, sets dependencies, budgets, deadlines and completion criteria. Does not mark its own work verified.
