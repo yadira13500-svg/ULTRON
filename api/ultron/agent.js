@@ -1,7 +1,7 @@
 import { db, scheduler } from 'hatchable';
 import { specialistRoleForStep, specialistCapabilitiesForRole } from 'lib/mission-runtime.js';
 import { buildMissionCoordinationReport, validateMissionGraph } from 'lib/mission-coordinator.js';
-import { buildAdaptiveReplan } from 'lib/mission-replanning.js';
+import { buildAdaptiveReplan, verifyAdaptiveReplan } from 'lib/mission-replanning.js';
 
 export const access = 'admin';
 export const methods = ['GET','POST','PUT'];
@@ -100,7 +100,7 @@ export default async function(req,res) {
   }
 
   const body=req.body||{}, id=String(body.id||''), action=String(body.action||'');
-  if (!id || !['cancel','retry','propose_replan','approve_replan'].includes(action)) return res.status(400).json({error:'Provide a run id and a supported mission action.'});
+  if (!id || !['cancel','retry','propose_replan','revise_replan','approve_replan'].includes(action)) return res.status(400).json({error:'Provide a run id and a supported mission action.'});
   if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))return res.status(400).json({error:'A valid mission ID is required.'});
   if(action==='propose_replan'){
     const run=(await db.query("SELECT id,status,plan,plan_version FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[id,owner])).rows[0];
@@ -111,9 +111,56 @@ export default async function(req,res) {
     if(!proposal.valid)return res.status(409).json({error:'A safe recovery plan could not be constructed.',details:proposal.errors});
     const revisionNo=Number((await db.query('SELECT COALESCE(MAX(revision_no),0)::int AS n FROM ultron_mission_revisions WHERE run_id=$1 AND owner_id=$2',[id,owner])).rows[0]?.n||0)+1;
     const status=proposal.readyForOwnerApproval?'ready_for_owner_approval':'needs_owner_input';
+    await db.query("UPDATE ultron_mission_revisions SET status='superseded',reviewed_at=now() WHERE run_id=$1 AND owner_id=$2 AND status IN ('ready_for_owner_approval','needs_owner_input')",[id,owner]);
     const saved=(await db.query("INSERT INTO ultron_mission_revisions(owner_id,run_id,revision_no,base_plan_version,candidate_plan,affected_positions,preserved_positions,verifier,status,rationale) VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9,$10::jsonb) RETURNING id,revision_no,status,verifier,affected_positions,preserved_positions,rationale,created_at",
       [owner,id,revisionNo,run.plan_version,JSON.stringify(proposal.plan),JSON.stringify(proposal.resetPositions),JSON.stringify(proposal.preservedPositions),JSON.stringify(proposal.verifier),status,JSON.stringify({failedRoots:proposal.failedRoots,revised:proposal.revised,manualInputRequired:proposal.manualInputRequired,note:proposal.note})])).rows[0];
     return res.status(201).json({ok:true,revision:saved,proposal});
+  }
+  if(action==='revise_replan'){
+    const revisionId=String(body.revisionId||'');
+    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(revisionId))return res.status(400).json({error:'A valid revision ID is required.'});
+    const revision=(await db.query("SELECT * FROM ultron_mission_revisions WHERE id=$1 AND run_id=$2 AND owner_id=$3",[revisionId,id,owner])).rows[0];
+    if(!revision||revision.status!=='needs_owner_input')return res.status(409).json({error:'This revision is not waiting for owner input.'});
+    const run=(await db.query("SELECT status,plan_version FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[id,owner])).rows[0];
+    if(!run||run.status!=='failed'||Number(run.plan_version)!==Number(revision.base_plan_version))return res.status(409).json({error:'The mission changed. Prepare a fresh recovery plan.'});
+    const inputs=body.stepInputs&&typeof body.stepInputs==='object'&&!Array.isArray(body.stepInputs)?body.stepInputs:{};
+    const proposal=buildAdaptiveReplan((await db.query('SELECT position,step_type,title,input,depends_on,status,result,error FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 ORDER BY position',[id,owner])).rows);
+    if(!proposal.valid)return res.status(409).json({error:'The original recovery plan is no longer valid.',details:proposal.errors});
+    const manualPositions=new Set(proposal.manualInputRequired.map(x=>String(x.position)));
+    for(const key of Object.keys(inputs))if(!manualPositions.has(key))return res.status(400).json({error:'Owner input may only revise steps explicitly marked as requiring input.'});
+    const supplied=[];
+    for(const item of proposal.manualInputRequired){
+      const position=String(item.position),patch=inputs[position];
+      if(!patch||typeof patch!=='object'||Array.isArray(patch))return res.status(400).json({error:'Provide corrected input for step '+position+'.'});
+      const step=proposal.plan.find(x=>Number(x.position)===item.position);
+      const merged={...(step.input||{}),...patch};
+      if(JSON.stringify(merged)===JSON.stringify(step.input||{}))return res.status(400).json({error:'Step '+position+' must receive a meaningful input change before it can be replanned.'});
+      if(step.type==='verify_url'||step.type==='retrieve_source'){
+        if(!safeUrl(merged.url))return res.status(400).json({error:'Step '+position+' requires a public HTTPS URL.'});
+      }else if(step.type==='research_search'){
+        if(!String(merged.query||'').trim()||String(merged.query).length>300)return res.status(400).json({error:'Step '+position+' needs a research query under 300 characters.'});
+      }else if(step.type==='assess_claim'){
+        if(!String(merged.claim||'').trim()||String(merged.claim).length>600||!Array.isArray(merged.source_urls)||merged.source_urls.length<2||merged.source_urls.length>4||new Set(merged.source_urls).size!==merged.source_urls.length)return res.status(400).json({error:'Step '+position+' needs a claim and 2–4 distinct source URLs.'});
+        for(const url of merged.source_urls)if(!safeUrl(url)||!proposal.plan.some((x,j)=>j+1<item.position&&x.type==='retrieve_source'&&x.input.url===url))return res.status(400).json({error:'Every claim source must be a public HTTPS URL captured by an earlier retrieve-source step.'});
+      }else if(step.type==='save_learning'){
+        if(!String(merged.topic||'').trim()||(!String(merged.summary||'').trim()&&!String(merged.source_url||'').trim())||String(merged.summary||'').length>3000)return res.status(400).json({error:'Step '+position+' needs a topic and a summary or earlier captured source.'});
+        if(merged.source_url&&(!safeUrl(merged.source_url)||!proposal.plan.some((x,j)=>j+1<item.position&&x.type==='retrieve_source'&&x.input.url===merged.source_url)))return res.status(400).json({error:'Learning source must be captured by an earlier retrieve-source step.'});
+      }else if(step.type==='create_task'){
+        if(!String(merged.title||'').trim()||String(merged.title).length>180||String(merged.body||'').length>2000)return res.status(400).json({error:'Step '+position+' needs a task title under 180 characters and details under 2,000 characters.'});
+      }else if(step.type==='skill_apply'){
+        if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(merged.skill_id||''))||!String(merged.task_description||'').trim()||!String(merged.metric_label||'').trim()||!Number.isFinite(Number(merged.baseline_value))||!['higher_is_better','lower_is_better'].includes(merged.metric_direction))return res.status(400).json({error:'Step '+position+' needs a valid mastered skill and complete measurement details.'});
+        const skill=(await db.query("SELECT id FROM ultron_skill_modules WHERE id=$1 AND owner_id=$2 AND status='mastered'",[merged.skill_id,owner])).rows[0];
+        if(!skill)return res.status(409).json({error:'Only an owner-reviewed mastered skill can be used in a recovery plan.'});
+      }
+      step.input=merged;
+      supplied.push({position:item.position,stepType:step.type,input:merged});
+    }
+    const verification=verifyAdaptiveReplan((await db.query('SELECT position,step_type,title,input,depends_on,status,result,error FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 ORDER BY position',[id,owner])).rows,proposal.plan,proposal.preservedPositions,proposal.resetPositions);
+    if(!verification.passed)return res.status(409).json({error:'The corrected recovery plan did not pass independent validation.',details:verification.errors});
+    const rationale={failedRoots:proposal.failedRoots,revised:proposal.revised,manualInputRequired:[],ownerProvidedInputs:supplied,note:'Owner corrections were validated against the original mission graph. Review and approve this version before execution resumes.'};
+    const saved=(await db.query("UPDATE ultron_mission_revisions SET candidate_plan=$4::jsonb,verifier=$5::jsonb,status='ready_for_owner_approval',rationale=$6::jsonb WHERE id=$1 AND run_id=$2 AND owner_id=$3 AND status='needs_owner_input' RETURNING id,revision_no,status,verifier,rationale,created_at",[revisionId,id,owner,JSON.stringify(proposal.plan),JSON.stringify(verification),JSON.stringify(rationale)])).rows[0];
+    if(!saved)return res.status(409).json({error:'The revision changed before owner corrections could be saved.'});
+    return res.json({ok:true,revision:saved,note:'Corrected plan passed independent structural checks. Owner approval is still required.'});
   }
   if(action==='approve_replan'){
     const revisionId=String(body.revisionId||'');
