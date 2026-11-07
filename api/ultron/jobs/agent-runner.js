@@ -287,6 +287,9 @@ export default async function(req,res) {
     run=(await db.query("UPDATE ultron_agent_runs SET status='running',attempts=attempts+1,lease_until=now()+interval '4 minutes',started_at=COALESCE(started_at,now()),updated_at=now() WHERE id=(SELECT id FROM ultron_agent_runs WHERE status='queued' OR (status='running' AND lease_until<now()) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id,owner_id,title,objective,status,attempts")).rows[0];
   }
   if(!run) return res.json({ok:true,processed:false,note:'No eligible agent run was found.'});
+  // A crash can occur after the step result commits but before its execution-task
+  // ledger row is finalized. The step is authoritative: reconcile that ledger first.
+  await db.query("UPDATE ultron_specialist_tasks t SET status='completed',output=s.result,lease_until=NULL,error='',updated_at=now(),completed_at=COALESCE(t.completed_at,s.completed_at,now()) FROM ultron_agent_steps s WHERE t.run_id=s.run_id AND t.owner_id=s.owner_id AND t.step_id=s.id AND t.phase='execution' AND t.status IN ('pending','running') AND s.status='completed' AND s.result IS NOT NULL",[]);
   await db.query("UPDATE ultron_specialist_tasks SET status='pending',lease_until=NULL,error='Recovered after specialist lease expiry.',updated_at=now() WHERE run_id=$1 AND owner_id=$2 AND status='running' AND lease_until<now()",[run.id,run.owner_id]);
   const activeSpecialists=(await db.query("SELECT MAX(lease_until) AS latest_lease FROM ultron_specialist_tasks WHERE run_id=$1 AND owner_id=$2 AND phase='execution' AND status='running' AND lease_until>now()",[run.id,run.owner_id])).rows[0];
   if(activeSpecialists?.latest_lease) {
