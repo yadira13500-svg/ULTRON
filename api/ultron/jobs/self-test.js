@@ -2,13 +2,13 @@ import { checkSourceFreshness } from 'lib/source-check.js';
 import { searchPublicWeb } from 'lib/search.js';
 import { extractResearchQuery, planMission } from 'lib/mission-plan.js';
 import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, shouldRecoverRunningStep, isMissionActive, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
-import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
+import { verifyStepResult, buildRevisionRequest, verifyClaimPassageAnchors } from 'lib/specialist-verifier.js';
 import { validateMissionGraph, buildMissionCoordinationReport } from 'lib/mission-coordinator.js';
 import { buildMissionIntelligence } from 'lib/mission-intelligence.js';
 import { buildEvidenceRepairProposal, verifyEvidenceRepairProposal, buildRepairedClaimAssessmentPlan } from 'lib/evidence-repair.js';
 import { buildAdaptiveReplan, verifyAdaptiveReplan } from 'lib/mission-replanning.js';
 import { summarizeRecoveryEvidence, recoveryStrategyForRevision, recoveryFailureCategory } from 'lib/recovery-evaluation.js';
-import { analyzeSentence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
+import { analyzeSentence, analyzeClaimEvidence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
 import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment, recommendLessonStrategies, applyApprovedStrategyPolicy, summarizeStrategyTrialOutcomes } from 'lib/learning-evaluation.js';
 
@@ -280,8 +280,10 @@ async function testIndependentVerifier() {
 }
 
 async function testClaimVerifierSourceIndependence() {
-  const reviewFor=count=>({review_status:'pending',assessment_status:'evidence_candidates_found',assessment:{sourceCount:2,independentPublisherCount:count,deepAnalysis:{independence:{independentGroupCount:count}}}});
-  const makeDb=count=>({query:async()=>({rows:[reviewFor(count)]})});
+  const passage='The council approved the project after review.';
+  const urls=['https://alpha.example/a','https://beta.example/b'];
+  const reviewFor=count=>({review_status:'pending',assessment_status:'evidence_candidates_found',assessment:{sourceCount:2,independentPublisherCount:count,deepAnalysis:{independence:{independentGroupCount:count},perSource:urls.map((url,index)=>({index,url,passageId:String(index)+':0:'+passage.length,startOffset:0,endOffset:passage.length,exactQuote:passage,offsetBasis:'captured_source_excerpt_utf16'}))}}});
+  const makeDb=count=>({query:async sql=>String(sql).includes('SELECT result FROM ultron_agent_steps')?({rows:urls.map(url=>({result:{url,retrieved:true,excerpt:passage}}))}):({rows:[reviewFor(count)]})});
   const step={id:'fixture-claim-step',step_type:'assess_claim',input:{claim:'The council approved the project.'}};
   const duplicateOrigins=await verifyStepResult(step,{verified:false},makeDb(1),'test-owner','test-run');
   const independentOrigins=await verifyStepResult(step,{verified:false},makeDb(2),'test-owner','test-run');
@@ -316,6 +318,23 @@ function testLabeledClaimEvidenceFixtures() {
   const independentOk=independent.independentGroupCount===2;
   const ok=evaluated.every(x=>x.ok)&&independentOk;
   return {name:'labeled_claim_evidence_evaluation',ok,semantic:ok,fixtureCount:evaluated.length,passedFixtures:evaluated.filter(x=>x.ok).length,independentOrigins:independent.independentGroupCount,detail:ok?'Eight labeled claim fixtures and a distinct-origin positive control passed. These remain heuristic screening tests, not semantic entailment.':'One or more labeled claim signals or independent-origin positive controls failed.',fixtures:evaluated};
+}
+
+function testExactClaimPassageAnchors() {
+  const claim='The city approved the transit plan in 2025.';
+  const sources=[
+    {url:'https://alpha.example/report',host:'alpha.example',title:'City report',publisher:'Alpha',excerpt:'The city approved the transit plan in 2025 after public consultation. The council published the final decision.'},
+    {url:'https://beta.example/record',host:'beta.example',title:'Council record',publisher:'Beta',excerpt:'The city approved the transit plan in 2025 following a public hearing. The record includes the signed resolution.'}
+  ];
+  const assessment=analyzeClaimEvidence(claim,sources);
+  const captured=sources.map(s=>({...s,retrieved:true}));
+  const valid=verifyClaimPassageAnchors(assessment.perSource,captured,2);
+  const tampered=assessment.perSource.map((p,i)=>i===0?{...p,exactQuote:p.exactQuote+' forged'}:p);
+  const invalid=verifyClaimPassageAnchors(tampered,captured,2);
+  const offsetTampered=assessment.perSource.map((p,i)=>i===0?{...p,startOffset:p.startOffset+1}:p);
+  const invalidOffset=verifyClaimPassageAnchors(offsetTampered,captured,2);
+  const ok=valid.passed&&valid.anchoredCount===2&&!invalid.passed&&!invalidOffset.passed&&assessment.perSource.every(p=>p.passageId&&p.offsetBasis==='captured_source_excerpt_utf16');
+  return {name:'exact_claim_passage_anchors_and_tamper_detection',ok,semantic:ok,anchored:valid.anchoredCount,quoteTamperingRejected:!invalid.passed,offsetTamperingRejected:!invalidOffset.passed,detail:ok?'Each claim passage has a stable ID and exact offsets into captured source text; altered quotes and offsets are rejected.':'Exact passage anchoring or tamper detection failed.'};
 }
 
 function testAutonomousEvidenceRepairPlanning() {
@@ -414,6 +433,7 @@ export default async function (req, res) {
   results.push(await testClaimVerifierSourceIndependence());
   results.push(testGeneralOutcomeVerification());
   results.push(testLabeledClaimEvidenceFixtures());
+  results.push(testExactClaimPassageAnchors());
   results.push(testExplicitArithmeticEvaluation());
   results.push(testClaimContradictionAndSourceIndependence());
   results.push(await testPublicSearch());

@@ -119,4 +119,10 @@ Turn the current single-runner workflow into a coordinated team of bounded speci
 - Each retrieval and claim-assessment step receives a separate verifier record. The mission inspector shows original-versus-revised screening status, source counts and human-review state. Factual truth remains explicitly unverified.
 - Regression coverage verifies selection bounds, completed-search URL provenance, unique host diversity, capture-before-assessment dependencies and the no-truth-certification boundary. No paid model calls or automatic source selection are introduced.
 
+## Passage-level evidence anchoring and verifier read-back (v227)
+- Claim analysis now records a stable passage ID, exact quoted text, UTF-16 start/end offsets into the captured source excerpt, and an explicit offset basis for every per-source passage selected by the deterministic screen.
+- The independent verifier reads the persisted captured source-step results back from the database and checks that each cited quote, URL, passage ID and offset range matches the original captured excerpt. Missing, altered or misaligned passage anchors fail verification; source count and origin-diversity checks remain separate.
+- Mission Intelligence exposes the anchored passages and source links in the mission inspector so the owner can inspect the evidence rather than relying only on aggregate counts.
+- Regression fixtures cover valid anchors, altered quote rejection, offset tampering, and the separate origin-diversity gate. The passage screen is still deterministic lexical/polarity/numeric screening, not semantic entailment or proof of factual truth; human review remains required. No paid model calls or automatic source selection.
+
 This document records the live bounded-specialist implementation and explicitly distinguishes it from fully autonomous, model-backed specialist agents.
