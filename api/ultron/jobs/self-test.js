@@ -130,7 +130,7 @@ function testLabeledClaimEvidenceFixtures() {
   const fixtures=[
     {name:'polarity_conflict',claim:'The city approved the proposal in 2025.',sentence:'The city rejected the proposal in 2025.',expect:a=>a.valenceConflict===true},
     {name:'negation_conflict',claim:'The council did not approve the proposal.',sentence:'The council approved the proposal after review.',expect:a=>a.polarityMismatch===true},
-    {name:'numeric_conflict',claim:'The project cost 120 million dollars in 2024.',sentence:'The project cost 150 million dollars in 2024.',expect:a=>a.numberConflict===true},
+    {name:'numeric_conflict',claim:'The project cost 120 million dollars in 2024.',sentence:'The project cost 150 million dollars in 2024.',expect:a=>a.numberConflict===true&&stanceOf(a)==='contradicts_candidate'},
     {name:'numeric_match',claim:'The project cost 120 million dollars in 2024.',sentence:'The project cost 120 million dollars in 2024.',expect:a=>a.numberMatch===true},
     {name:'direction_conflict',claim:'Revenue increased during 2025.',sentence:'Revenue declined during 2025.',expect:a=>a.directionConflict===true},
     {name:'hedged_claim',claim:'The treatment is effective for the condition.',sentence:'The treatment may be effective for the condition.',expect:a=>a.hedged===true},
