@@ -117,6 +117,18 @@ async function testIndependentVerifier() {
   return {name:'independent_verifier_seeded_defect',ok,semantic:ok,detail:ok?'Verifier rejected empty evidence and accepted a structurally valid lead without claiming factual truth.':'Verifier failed to challenge the seeded empty-result defect.',badRejected:!bad.passed,goodAccepted:good.passed};
 }
 
+async function testClaimVerifierSourceIndependence() {
+  const reviewFor=count=>({review_status:'pending',assessment_status:'evidence_candidates_found',assessment:{sourceCount:2,independentPublisherCount:count,deepAnalysis:{independence:{independentGroupCount:count}}}});
+  const makeDb=count=>({query:async()=>({rows:[reviewFor(count)]})});
+  const step={id:'fixture-claim-step',step_type:'assess_claim',input:{claim:'The council approved the project.'}};
+  const duplicateOrigins=await verifyStepResult(step,{verified:false},makeDb(1),'test-owner','test-run');
+  const independentOrigins=await verifyStepResult(step,{verified:false},makeDb(2),'test-owner','test-run');
+  const failed=duplicateOrigins.checks.find(x=>x.name==='claim_independent_origins_present');
+  const passed=independentOrigins.checks.find(x=>x.name==='claim_independent_origins_present');
+  const ok=!duplicateOrigins.passed&&failed?.ok===false&&independentOrigins.passed&&passed?.ok===true;
+  return {name:'claim_verifier_independent_citation_sufficiency',ok,semantic:ok,detail:ok?'Two URLs from one origin are rejected as insufficient; two independent origin groups pass the structural sufficiency gate.':'Verifier confused citation count with independent-origin count.',duplicateOriginRejected:!duplicateOrigins.passed,independentOriginAccepted:independentOrigins.passed};
+}
+
 function testGeneralOutcomeVerification() {
   const checks=[{text:'Each research subtask returned a lead.',check:{type:'search_results',min:2,perStep:true}},{text:'The owner must review the conclusion.',check:{type:'human_review'}}];
   const good=[{step_type:'research_search',status:'completed',result:{results:[{title:'A',url:'https://a.example'}]}},{step_type:'research_search',status:'completed',result:{results:[{title:'B',url:'https://b.example'}]}}];
@@ -184,6 +196,7 @@ export default async function (req, res) {
   results.push(testSpecialistRevisionPolicy());
   results.push(await testParallelExecution());
   results.push(await testIndependentVerifier());
+  results.push(await testClaimVerifierSourceIndependence());
   results.push(testGeneralOutcomeVerification());
   results.push(testLabeledClaimEvidenceFixtures());
   results.push(testClaimContradictionAndSourceIndependence());
