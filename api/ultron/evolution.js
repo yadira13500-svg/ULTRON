@@ -23,7 +23,7 @@ export default async function(req,res){
  if(req.method==='POST'){
   const type=String(b.type||'');
   if(type==='knowledge_sync'){
-   const {rows}=await db.query("SELECT id,topic,summary,source_url,source_name,published_at,source_status FROM ultron_knowledge WHERE owner_id=$1 AND source_url LIKE 'https://%' ORDER BY created_at DESC LIMIT 100",[owner]);
+   const {rows}=await db.query("SELECT id,topic,summary,source_url,source_name,published_at,source_status FROM ultron_knowledge WHERE owner_id=$1 AND source_url LIKE 'https://%' AND source_status='available' ORDER BY created_at DESC LIMIT 100",[owner]);
    let linked=0;
    for(const item of rows){
     const topicLabel=String(item.topic||'').slice(0,180);if(!topicLabel)continue;
@@ -37,7 +37,7 @@ export default async function(req,res){
    return res.json({ok:true,linked,scanned:rows.length,note:'Saved research sources are linked as evidence records; this does not independently verify their claims.'});
   }
   if(type==='discover_relationships'){
-   const {rows}=await db.query("SELECT id,topic,summary,source_url,source_name,published_at,source_status,created_at FROM ultron_knowledge WHERE owner_id=$1 AND source_url LIKE 'https://%' AND COALESCE(source_status,'unchecked') NOT IN ('blocked','unavailable') ORDER BY created_at DESC LIMIT 100",[owner]);
+   const {rows}=await db.query("SELECT id,topic,summary,source_url,source_name,published_at,source_status,created_at FROM ultron_knowledge WHERE owner_id=$1 AND source_url LIKE 'https://%' AND source_status='available' ORDER BY created_at DESC LIMIT 100",[owner]);
    const quality=x=>{let score=0.35;const host=(()=>{try{return new URL(x.source_url).hostname.replace(/^www\\./,'').toLowerCase()}catch{return ''}})();if(/\\.(gov|edu)$/.test(host)||/\\.(gov|edu)\\./.test(host))score+=0.3;else if(/reuters\\.com|apnews\\.com|bbc\\.co\\.uk|bbc\\.com|who\\.int|un\\.org|worldbank\\.org|nature\\.com|science\\.org|ft\\.com|npr\\.org|theguardian\\.com/.test(host))score+=0.25;else if(host)score+=0.1;if(x.source_status==='available')score+=0.1;if(x.published_at){const age=Date.now()-Date.parse(x.published_at);if(Number.isFinite(age)&&age<30*86400000)score+=0.1;else if(Number.isFinite(age)&&age<365*86400000)score+=0.05}return Math.max(0,Math.min(1,score))};
    const named=x=>{const t=String(x||'');const found=t.match(/\\b(?:[A-Z][a-z]{2,}(?:\\s+[A-Z][a-z]{2,}){1,3})\\b/g)||[];return [...new Set(found.map(v=>v.toLowerCase()))].filter(v=>!['united states','united kingdom','new york','world health','prime minister'].includes(v))};
    const relation=x=>{const t=String(x||'').toLowerCase();const patterns=[['influences',/\\b(influences|drives|shapes|affects)\\b/],['causes or contributes to',/\\b(causes|contributes to|leads to|results in)\\b/],['cooperates with',/\\b(cooperates with|partners with|jointly)\\b/],['responds to',/\\b(responds to|reacts to|in response to)\\b/],['depends on',/\\b(depends on|relies on|is dependent on)\\b/]];return patterns.find(x=>x[1].test(t))?.[0]||''};
