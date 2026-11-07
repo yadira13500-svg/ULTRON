@@ -2,7 +2,7 @@ import { db, scheduler } from 'hatchable';
 import { analyzeClaimEvidence } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
 import { searchPublicWeb } from 'lib/search.js';
-import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, shouldRecoverRunningStep, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
+import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, shouldRecoverRunningStep, isMissionActive, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
 
 export const access = 'scheduler';
@@ -71,6 +71,8 @@ async function quickResearch(query) {
   return {results:results.slice(0,5),source:results.length?'DuckDuckGo Instant Answers / Wikipedia':'Free public indexes',retrievedAt:new Date().toISOString()};
 }
 async function executeStep(step, owner, runId, approvedLessons=[]) {
+  const active=(await db.query("SELECT status FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[runId,owner])).rows[0];
+  if(!isMissionActive(active?.status)) throw new Error('Mission cancelled before specialist operation.');
   const input=step.input||{};
   const lessonUses=[];
   if(step.step_type==='retrieve_source') {
@@ -91,7 +93,7 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
     if(!skill) throw new Error('Skill is no longer owner-reviewed as mastered; application was blocked.');
     const task=String(input.task_description||'').trim().slice(0,2000),metric=String(input.metric_label||'').trim().slice(0,120),baseline=Number(input.baseline_value),baselineEvidence=String(input.baseline_evidence||'').trim().slice(0,2000),direction=['higher_is_better','lower_is_better'].includes(input.metric_direction)?input.metric_direction:'higher_is_better';
     if(!task||!metric||!Number.isFinite(baseline)||baselineEvidence.length<12) throw new Error('Skill application requires a practical task, numeric baseline, and a substantive note describing how the baseline was measured.');
-    const inserted=await db.query("INSERT INTO ultron_skill_applications(owner_id,skill_id,run_id,agent_step_id,task_description,metric_label,metric_direction,baseline_value,baseline_evidence,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'awaiting_outcome') ON CONFLICT(owner_id,agent_step_id) WHERE agent_step_id IS NOT NULL DO NOTHING RETURNING id,skill_id,run_id,task_description,metric_label,metric_direction,baseline_value,baseline_evidence,status,created_at",[owner,skill.id,runId,step.id,task,metric,direction,baseline,baselineEvidence]);
+    const inserted=await db.query("INSERT INTO ultron_skill_applications(owner_id,skill_id,run_id,agent_step_id,task_description,metric_label,metric_direction,baseline_value,baseline_evidence,status) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,'awaiting_outcome' WHERE EXISTS(SELECT 1 FROM ultron_agent_runs WHERE id=$3 AND owner_id=$1 AND status='running') ON CONFLICT(owner_id,agent_step_id) WHERE agent_step_id IS NOT NULL DO NOTHING RETURNING id,skill_id,run_id,task_description,metric_label,metric_direction,baseline_value,baseline_evidence,status,created_at",[owner,skill.id,runId,step.id,task,metric,direction,baseline,baselineEvidence]);
     const application=inserted.rows[0]||(await db.query('SELECT id,skill_id,run_id,task_description,metric_label,metric_direction,baseline_value,baseline_evidence,status,created_at FROM ultron_skill_applications WHERE owner_id=$1 AND agent_step_id=$2',[owner,step.id])).rows[0];
     const check=application?(await db.query('SELECT id,skill_id,run_id,task_description,metric_label,metric_direction,baseline_value,baseline_evidence,status FROM ultron_skill_applications WHERE id=$1 AND owner_id=$2',[application.id,owner])).rows[0]:null;
     if(!check||check.status!=='awaiting_outcome'||check.skill_id!==skill.id||check.run_id!==runId||check.task_description!==task||check.metric_label!==metric||Number(check.baseline_value)!==baseline) throw new Error('Skill application record was not persisted with the expected mission-step identity and values.');
@@ -226,7 +228,7 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
     assessment.contradictionCandidates=[...assessment.contradictionCandidates,...deep.perSource.filter(x=>x.stance==='contradicts_candidate').map(x=>({source:x.url,excerpt:x.excerpt,signals:x.signals,reviewRequired:true}))];
     assessment.method='Deterministic evidence screen: per-source stance (supports / contradicts / unclear), negation, direction and number conflicts, source-independence grouping (shared domain, publisher, canonical page, copied phrasing, common wire attribution), freshness and provenance. It does not establish entailment, causation or truth; a human reviewer decides.';
     assessment.nextAction=deep.reasons.length?deep.reasons.join(' ')+' Inspect each quoted passage and decide.':'Inspect each quoted passage, original reporting versus syndication, dates and any contradiction candidates. A human reviewer must decide.';
-    const reviewSave=await db.query("INSERT INTO ultron_claim_reviews(owner_id,run_id,step_id,claim_text,assessment_status,method,assessment) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) ON CONFLICT(owner_id,step_id) DO UPDATE SET claim_text=EXCLUDED.claim_text,assessment_status=EXCLUDED.assessment_status,method=EXCLUDED.method,assessment=EXCLUDED.assessment WHERE ultron_claim_reviews.review_status='pending' RETURNING id,review_status",[owner,runId,step.id,claim,assessment.assessmentStatus,assessment.method,JSON.stringify(assessment)]);
+    const reviewSave=await db.query("INSERT INTO ultron_claim_reviews(owner_id,run_id,step_id,claim_text,assessment_status,method,assessment) SELECT $1,$2,$3,$4,$5,$6,$7::jsonb WHERE EXISTS(SELECT 1 FROM ultron_agent_runs WHERE id=$2 AND owner_id=$1 AND status='running') ON CONFLICT(owner_id,step_id) DO UPDATE SET claim_text=EXCLUDED.claim_text,assessment_status=EXCLUDED.assessment_status,method=EXCLUDED.method,assessment=EXCLUDED.assessment WHERE ultron_claim_reviews.review_status='pending' RETURNING id,review_status",[owner,runId,step.id,claim,assessment.assessmentStatus,assessment.method,JSON.stringify(assessment)]);
     if(!reviewSave.rowCount) {
       const existing=(await db.query('SELECT id,review_status,reviewer_note,correction FROM ultron_claim_reviews WHERE owner_id=$1 AND step_id=$2',[owner,step.id])).rows[0];
       return {...assessment,reviewRecordCreated:false,reviewStatus:existing?.review_status||'reviewed',reviewPreserved:true,reviewerDecisionPreserved:!!existing?.reviewer_note||!!existing?.correction,lessonUses,note:'A prior human review exists for this assessment step. Its decision and rationale were preserved; a retry cannot reset it to pending.'};
@@ -235,7 +237,7 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
   }
   if(step.step_type==='create_task') {
     const title=String(input.title||'').trim(), body=String(input.body||'').trim();
-    const inserted=await db.query("INSERT INTO ultron_items(owner_id,kind,title,body,status,agent_step_id) VALUES($1,'task',$2,$3,'open',$4) ON CONFLICT(owner_id,agent_step_id) WHERE agent_step_id IS NOT NULL DO NOTHING RETURNING id,title,kind,status,created_at",[owner,title,body,step.id]);
+    const inserted=await db.query("INSERT INTO ultron_items(owner_id,kind,title,body,status,agent_step_id) SELECT $1,'task',$2,$3,'open',$4 WHERE EXISTS(SELECT 1 FROM ultron_agent_runs WHERE id=$5 AND owner_id=$1 AND status='running') ON CONFLICT(owner_id,agent_step_id) WHERE agent_step_id IS NOT NULL DO NOTHING RETURNING id,title,kind,status,created_at",[owner,title,body,step.id,runId]);
     const saved=inserted.rows[0]||(await db.query('SELECT id,title,kind,status,created_at FROM ultron_items WHERE owner_id=$1 AND agent_step_id=$2',[owner,step.id])).rows[0];
     const check=saved?(await db.query('SELECT id,title,kind,status FROM ultron_items WHERE id=$1 AND owner_id=$2',[saved.id,owner])).rows[0]:null;
     if(!check||check.id!==saved.id||check.title!==title||check.kind!=='task') throw new Error('The task was not persisted with the expected mission-step identity.');
@@ -254,7 +256,7 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
     const suppliedSummary=String(input.summary||'').trim();
     const summary=(suppliedSummary|| (capturedSource?'Extractive source note (not independently verified): '+String(capturedSource.title||'')+'. '+String(capturedSource.excerpt||'').slice(0,2700):'')).slice(0,3000);
     if(!topic||!summary) throw new Error('Learning needs a topic and either a summary or a previously captured source excerpt.');
-    const saved=await db.query("INSERT INTO ultron_knowledge(owner_id,topic,summary,source_url,source_name,published_at,source_status,last_checked_at,agent_step_id) VALUES($1,$2,$3,$4,$5,'','available',CASE WHEN $4<>'' THEN now() ELSE NULL END,$6) ON CONFLICT(owner_id,agent_step_id) WHERE agent_step_id IS NOT NULL DO NOTHING RETURNING id,topic,summary,source_url,source_name,created_at",[owner,topic,summary,sourceUrl,sourceName,step.id]);
+    const saved=await db.query("INSERT INTO ultron_knowledge(owner_id,topic,summary,source_url,source_name,published_at,source_status,last_checked_at,agent_step_id) SELECT $1,$2,$3,$4,$5,'','available',CASE WHEN $4<>'' THEN now() ELSE NULL END,$6 WHERE EXISTS(SELECT 1 FROM ultron_agent_runs WHERE id=$7 AND owner_id=$1 AND status='running') ON CONFLICT(owner_id,agent_step_id) WHERE agent_step_id IS NOT NULL DO NOTHING RETURNING id,topic,summary,source_url,source_name,created_at",[owner,topic,summary,sourceUrl,sourceName,step.id,runId]);
     const row=saved.rows[0]||(await db.query('SELECT id,topic,summary,source_url,source_name,created_at FROM ultron_knowledge WHERE owner_id=$1 AND agent_step_id=$2',[owner,step.id])).rows[0];
     const persisted=row?(await db.query('SELECT id,topic,summary,source_url,source_name,created_at FROM ultron_knowledge WHERE id=$1 AND owner_id=$2',[row.id,owner])).rows[0]:null;
     if(!persisted||persisted.topic!==topic||persisted.summary!==summary||persisted.source_url!==sourceUrl) throw new Error('Learning was written but its persisted contents could not be independently checked.');
@@ -297,6 +299,8 @@ export default async function(req,res) {
       const approvedLessons=(await db.query("SELECT id,lesson,confidence,evidence FROM ultron_agent_lessons WHERE owner_id=$1 AND status='approved' AND evidence->>'stepType'=$2 ORDER BY reviewed_at DESC LIMIT 3",[run.owner_id,step.step_type])).rows;
       let workingStep=step;
       let result=await executeStep(workingStep,run.owner_id,run.id,approvedLessons);
+      const postExecutionState=(await db.query("SELECT status FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
+      if(!isMissionActive(postExecutionState?.status)) return {kind:'skipped',step,note:'Mission was cancelled while this specialist was executing; no further verifier or completion writes were allowed.'};
       const verifierTask=(await db.query("UPDATE ultron_specialist_tasks SET status='running',attempts=attempts+1,lease_until=now()+interval '10 minutes',error='',updated_at=now() WHERE owner_id=$1 AND step_id=$2 AND phase='verification' AND status IN ('pending','running') RETURNING id",[run.owner_id,step.id])).rows[0];
       if(!verifierTask)throw new Error('Independent verifier task could not be claimed.');
       let independentVerification=await verifyStepResult(workingStep,result,db,run.owner_id,run.id);
@@ -320,7 +324,8 @@ export default async function(req,res) {
           throw revisionError;
         }
       }
-      await db.query("UPDATE ultron_specialist_tasks SET status=$3,verification=$4::jsonb,lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2",[verifierTask.id,run.owner_id,independentVerification.passed?'completed':'failed',JSON.stringify({...independentVerification,revisionCount:revisionHistory.length})]);
+      const verifierSaved=await db.query("UPDATE ultron_specialist_tasks SET status=$3,verification=$4::jsonb,lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' RETURNING id",[verifierTask.id,run.owner_id,independentVerification.passed?'completed':'failed',JSON.stringify({...independentVerification,revisionCount:revisionHistory.length})]);
+      if(!verifierSaved.rowCount) throw new Error('Verifier task was cancelled or claimed elsewhere before its result could be committed.');
       if(!independentVerification.passed)throw new Error('Independent verifier rejected '+role+' output after '+revisionHistory.length+' bounded revision(s): '+independentVerification.challenge.join('; '));
       if(revisionHistory.length)result.specialistRevisions=revisionHistory;
       result.specialist={role,worker:'bounded_deterministic_specialist',parallelBatchLimit:MAX_SPECIALIST_CONCURRENCY,executionTaskId:executionTask.id,verifierTaskId:verifierTask.id};
@@ -329,9 +334,11 @@ export default async function(req,res) {
       delete result.lessonUses;
       const saved=await db.query("UPDATE ultron_agent_steps SET status='completed',result=$3::jsonb,completed_at=now(),error='' WHERE id=$1 AND owner_id=$2 AND status='running' RETURNING id",[step.id,run.owner_id,JSON.stringify(result)]);
       if(!saved.rows.length)return {kind:'skipped',step,note:'Step state changed before completion was committed.'};
-      await db.query("UPDATE ultron_specialist_tasks SET status='completed',output=$3::jsonb,lease_until=NULL,error='',updated_at=now(),completed_at=now() WHERE owner_id=$1 AND step_id=$2 AND phase='execution'",[run.owner_id,step.id,JSON.stringify(result)]);
+      await db.query("UPDATE ultron_specialist_tasks SET status='completed',output=$3::jsonb,lease_until=NULL,error='',updated_at=now(),completed_at=now() WHERE owner_id=$1 AND step_id=$2 AND phase='execution' AND status='running'",[run.owner_id,step.id,JSON.stringify(result)]);
       return {kind:'completed',step,role};
     } catch(e) {
+      const missionState=(await db.query("SELECT status FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
+      if(!isMissionActive(missionState?.status)) return {kind:'skipped',step,note:'Mission was cancelled; late specialist results were discarded.'};
       const message=String(e?.message||e).slice(0,500),attempt=Number(claim.rows[0]?.attempts||1),disposition=classifyStepFailure(message,attempt);
       if(disposition.retry) {
         await db.query("UPDATE ultron_agent_steps SET status='pending',error=$3,started_at=NULL WHERE id=$1 AND owner_id=$2 AND status='running'",[step.id,run.owner_id,'Transient failure on attempt '+attempt+': '+message]);

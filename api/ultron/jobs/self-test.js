@@ -1,7 +1,7 @@
 import { checkSourceFreshness } from 'lib/source-check.js';
 import { searchPublicWeb } from 'lib/search.js';
 import { extractResearchQuery, planMission } from 'lib/mission-plan.js';
-import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, shouldRecoverRunningStep, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
+import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, shouldRecoverRunningStep, isMissionActive, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
 import { analyzeSentence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
@@ -79,6 +79,15 @@ function testMissionRuntimePolicies() {
   const roles=specialistRoleForStep('research_search')==='researcher'&&specialistRoleForStep('assess_claim')==='analyst'&&specialistRoleForStep('create_task')==='executor';
   const ok=depsBlocked&&depsReady&&retry.retry&&exhausted.terminal&&statusOnly.retry&&!permanent.transient&&!permanent.retry&&roles&&MAX_SPECIALIST_CONCURRENCY===3;
   return {name:'mission_runtime_dependency_retry_and_roles',ok,semantic:ok,detail:ok?'Dependency gating, status-only transient retry, permanent-failure handling and role routing passed.':'A dependency, retry, permanent-failure or specialist-role policy regressed.',statusOnlyRetry:statusOnly.retry,permanentFailureNotRetried:!permanent.retry,maxParallel:MAX_SPECIALIST_CONCURRENCY};
+}
+
+function testCancellationGuards() {
+  const active=isMissionActive('running');
+  const queued=isMissionActive('queued');
+  const cancelled=isMissionActive('cancelled');
+  const completed=isMissionActive('completed');
+  const ok=active&&!queued&&!cancelled&&!completed;
+  return {name:'cancellation_guards',ok,semantic:ok,detail:ok?'Only running missions may proceed; queued, cancelled and completed missions are blocked.':'Mission status guard allowed a non-running mission to continue.',runningAllowed:active,queuedBlocked:!queued,cancelledBlocked:!cancelled,completedBlocked:!completed};
 }
 
 function testMissionGraphPolicy() {
@@ -221,6 +230,7 @@ export default async function (req, res) {
   results.push(testMissionPlanningRegression());
   results.push(testMissionRuntimePolicies());
   results.push(testSpecialistLeaseBoundaryRecovery());
+  results.push(testCancellationGuards());
   results.push(testMissionGraphPolicy());
   results.push(testSpecialistRevisionPolicy());
   results.push(await testParallelExecution());
