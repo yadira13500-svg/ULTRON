@@ -133,8 +133,10 @@ export default async function(req,res){
    const priorEvidence=(await db.query('SELECT practical_evidence FROM ultron_skill_assessments WHERE id=$1 AND owner_id=$2',[b.id,owner])).rows[0]?.practical_evidence||{};
    const practical=Object.keys(supplied).length?supplied:priorEvidence;
    const practicalEvidence={task:String(practical.task||'').trim().slice(0,1000),submitted_work:String(practical.submitted_work||'').trim().slice(0,12000),verification_method:String(practical.verification_method||'').trim().slice(0,4000),reviewer_result:String(practical.reviewer_result||'').trim().slice(0,2000),explanation:String(practical.explanation||'').trim().slice(0,2000),owner_attested:practical.owner_attested===true,submitted_at:practical.submitted_at||null};
-   if(b.practical_pass===true&&(!practicalEvidence.task||!practicalEvidence.submitted_work||!practicalEvidence.verification_method||!practicalEvidence.reviewer_result))return res.status(400).json({error:'A practical pass requires the task, submitted work, verification method and reviewer result to be stored as evidence.'});
+   if(b.practical_pass===true&&(!practicalEvidence.task||!practicalEvidence.submitted_work||!practicalEvidence.verification_method||!practicalEvidence.reviewer_result||!practicalEvidence.explanation||practicalEvidence.owner_attested!==true))return res.status(400).json({error:'A practical pass requires owner-attested work, the task, submitted work, actual test output, learner explanation and reviewer result. Assistant-authored examples cannot establish learner mastery.'});
+   // Reviewer rationale is validated after notes are normalized below.
    const notes=String(b.reviewer_notes||'').trim().slice(0,2000);
+   if(b.practical_pass===true&&notes.length<12)return res.status(400).json({error:'A practical pass requires a substantive reviewer rationale of at least 12 characters.'});
    const weak=Array.isArray(b.weak_concepts)?b.weak_concepts.slice(0,20).map(x=>String(x).slice(0,100)):[];
    const practice=Array.isArray(b.practice_tasks)?b.practice_tasks.slice(0,12).map(x=>String(x).slice(0,500)):[];
    const assessmentSkill=(await db.query('SELECT id,concepts_json FROM ultron_skill_modules WHERE id=(SELECT skill_id FROM ultron_skill_assessments WHERE id=$1 AND owner_id=$2)',[b.id,owner])).rows[0];
