@@ -177,6 +177,12 @@ Turn the current single-runner workflow into a coordinated team of bounded speci
 - Self-test includes a decision matrix for completed-step preservation, live lease/dependency waits, safe resume, transient retry, permanent-failure replanning, exhausted retry budget and external-side-effect approval. These are deterministic policy tests; live database crash injection at every commit boundary remains separate work.
 - No paid model calls, provider credits, new external actions, existing data rewrites or visibility changes are introduced.
 
+## Sentinel structured assessment packets (v254)
+- A successful, explicitly approved single-image analysis now returns a structured `ultron.sentinel.assessment.v1` packet alongside the original provider description. The packet preserves supplied source type/mode/label and optional capture time, marks the content unverified, and supplies a human review checklist and explicit limitations.
+- The existing visual-awareness panel renders the packet separately from the raw provider response. It is an ephemeral display only: no image or packet is persisted by this feature, and no extra provider call is made.
+- The packet builder is deterministic formatting, not a new intelligence or threat-detection model. It does not infer location, time, intent, identity, threat level or tactical meaning. Action execution, device control, identity recognition and targeting remain disabled.
+- Self-test includes packet shape, empty-input rejection, required human review, checklist and no-action invariants.
+
 ## Sentinel defense-support scope hardening (next release)
 - Sentinel's authorized, consent-based analysis allowlist now explicitly includes infrastructure condition, environmental hazards, equipment condition, logistics-status summaries and after-action reporting alongside uploaded/exported imagery and telemetry summaries.
 - Operation names are normalized for case, whitespace and hyphen variants before policy evaluation. The denylist now also explicitly rejects person-tracking aliases, target ranking, attack planning, engagement recommendations, weapons guidance, persistent surveillance and device-control aliases.

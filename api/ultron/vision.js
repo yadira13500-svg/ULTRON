@@ -1,5 +1,6 @@
 import { config } from 'hatchable';
 import { evaluateSentinelRequest } from 'lib/sentinel-safety.js';
+import { buildSentinelAssessment } from 'lib/sentinel-assessment.js';
 
 export const access = 'admin';
 export const methods = ['POST'];
@@ -20,6 +21,7 @@ export default async function(req, res) {
     const data = await response.json();
     const description = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
     if (!description) return res.status(502).json({ error: 'NVIDIA returned no visual description.' });
-    return res.json({ reply: description, provider: 'NVIDIA Llama 3.2 90B Vision', review_required: true, device_control: false, identity_recognition: false, targeting: false, trial_notice: 'NVIDIA trial terms may permit recording of submitted inputs and outputs.' });
+    const assessment = buildSentinelAssessment({ observation: description, sourceType: body.source_type || 'uploaded_image', sourceMode, sourceLabel: body.source_label || 'User-approved single image', capturedAt: body.captured_at || '' });
+    return res.json({ reply: description, assessment, provider: 'NVIDIA Llama 3.2 90B Vision', review_required: true, device_control: false, identity_recognition: false, targeting: false, trial_notice: 'NVIDIA trial terms may permit recording of submitted inputs and outputs.' });
   } catch (error) { return res.status(502).json({ error: 'Vision provider unavailable: ' + String(error && error.message || error).slice(0, 180) }); }
 }
