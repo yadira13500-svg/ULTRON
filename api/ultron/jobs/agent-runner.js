@@ -180,8 +180,38 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
       return {title:source.title||'',url:source.url,canonicalUrl:source.canonicalUrl||null,publisher:source.publisher||null,publicationDate:source.publicationDate||null,modifiedDate:source.modifiedDate||null,httpStatus:source.httpStatus||null,contentType:source.contentType||null,truncated:source.truncated===true,host,excerptCandidate:best.sentence,termOverlap:best.overlap,matchedTerms:best.matchedTerms,retrievedAt:source.retrievedAt||null};
     });
     const domains=[...new Set(matches.map(x=>x.host).filter(Boolean))];
+    const registrableDomain=host=>{
+      const parts=String(host||'').toLowerCase().replace(/^www\./,'').split('.').filter(Boolean);
+      if(parts.length<=2)return parts.join('.');
+      const compound=new Set(['co.uk','org.uk','com.au','co.nz','co.ke','com.br','co.jp','com.sg']);
+      const suffix=parts.slice(-2).join('.');
+      return compound.has(suffix)?parts.slice(-3).join('.'):parts.slice(-2).join('.');
+    };
+    const normalizedText=s=>String(s||'').toLowerCase().replace(/https?:\/\/\S+/g,' ').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+    const publisherKey=s=>{
+      const p=String(s.publisher||'').toLowerCase().trim();
+      return p? p.replace(/\s+(inc|llc|ltd|limited|corporation|corp)\.?$/,''):registrableDomain(s.host);
+    };
+    const sourceGroups=new Map();
+    for(const source of matches){const key=publisherKey(source);if(!sourceGroups.has(key))sourceGroups.set(key,[]);sourceGroups.get(key).push(source.url);}
+    const independentPublisherCount=sourceGroups.size;
+    const similarity=(a,b)=>{
+      const aa=new Set(normalizedText(a).split(' ').filter(x=>x.length>3)),bb=new Set(normalizedText(b).split(' ').filter(x=>x.length>3));
+      if(!aa.size||!bb.size)return 0;let overlap=0;for(const x of aa)if(bb.has(x))overlap++;
+      return Number((overlap/(aa.size+bb.size-overlap)).toFixed(3));
+    };
+    const negation=new RegExp('\\b(no|not|never|neither|without|failed|declined|decreased|fell|reduced|denied|false)\\b','i');
+    const contradictionCandidates=[];
+    for(let i=0;i<matches.length;i++)for(let j=i+1;j<matches.length;j++){
+      const a=matches[i],b=matches[j],sa=a.excerptCandidate,sb=b.excerptCandidate;
+      const shared=similarity(sa,sb);
+      const numsA=(sa.match(/\b\d+(?:\.\d+)?%?\b/g)||[]),numsB=(sb.match(/\b\d+(?:\.\d+)?%?\b/g)||[]);
+      const numericConflict=numsA.length&&numsB.length&&numsA.some(n=>!numsB.includes(n))&&numsB.some(n=>!numsA.includes(n));
+      const polarityConflict=negation.test(sa)!==negation.test(sb);
+      if(shared>=0.12&&(numericConflict||polarityConflict))contradictionCandidates.push({sourceA:a.url,sourceB:b.url,excerptA:sa,excerptB:sb,sharedLanguageScore:shared,possibleNumericConflict:!!numericConflict,possiblePolarityConflict:!!polarityConflict,reviewRequired:true});
+    }
     const candidates=matches.filter(x=>x.termOverlap>=0.35&&x.matchedTerms.length>=3);
-    const assessment={claim,operationVerified:true,assessmentStatus:candidates.length>=2&&domains.length>=2?'evidence_candidates_found':'insufficient_evidence',distinctHostnameCount:domains.length,sourceCount:matches.length,evidenceCandidates:candidates,allSources:matches,verified:false,verificationType:'conservative_claim_evidence_scan',method:'Deterministic term-overlap scan only. It does not infer entailment, contradiction, publisher independence, or truth. Distinct hostnames are not proof of independent publishers.',nextAction:'A human reviewer must inspect the quoted passages and source provenance before accepting or rejecting the claim.'};
+    const assessment={claim,operationVerified:true,assessmentStatus:candidates.length>=2&&independentPublisherCount>=2?'evidence_candidates_found':'insufficient_evidence',distinctHostnameCount:domains.length,independentPublisherCount,sourceCount:matches.length,evidenceCandidates:candidates,allSources:matches,sourceIndependence:{publisherGroups:[...sourceGroups.entries()].map(([publisher,urls])=>({publisher,sourceCount:urls.length,urls})),note:'Publisher labels and registrable domains are heuristic signals, not proof of editorial independence or ownership.'},contradictionCandidates,verified:false,verificationType:'independent_source_and_contradiction_screen',method:'Deterministic evidence screen: claim-term overlap, publisher/domain grouping, excerpt similarity, and possible polarity/numeric conflicts. It does not establish entailment, causation, or truth; contradiction candidates require human inspection.',nextAction:'Inspect each quoted passage, publisher ownership, original reporting versus syndication, dates, and possible contradiction candidates. A human reviewer must decide.'};
     const reviewSave=await db.query("INSERT INTO ultron_claim_reviews(owner_id,run_id,step_id,claim_text,assessment_status,method,assessment) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) ON CONFLICT(owner_id,step_id) DO UPDATE SET claim_text=EXCLUDED.claim_text,assessment_status=EXCLUDED.assessment_status,method=EXCLUDED.method,assessment=EXCLUDED.assessment WHERE ultron_claim_reviews.review_status='pending' RETURNING id,review_status",[owner,runId,step.id,claim,assessment.assessmentStatus,assessment.method,JSON.stringify(assessment)]);
     if(!reviewSave.rowCount) {
       const existing=(await db.query('SELECT id,review_status,reviewer_note,correction FROM ultron_claim_reviews WHERE owner_id=$1 AND step_id=$2',[owner,step.id])).rows[0];
@@ -224,8 +254,7 @@ export default async function(req,res) {
   if(requested) {
     run=(await db.query("UPDATE ultron_agent_runs SET status='running',attempts=attempts+1,lease_until=now()+interval '4 minutes',started_at=COALESCE(started_at,now()),updated_at=now() WHERE id=$1 AND status='queued' RETURNING id,owner_id,title,objective,status,attempts",[requested])).rows[0];
     if(!run) {
-      run=(await db.query("SELECT id,owner_id,title,objective,status,attempts FROM ultron_agent_runs WHERE id=$1 AND status='running' AND lease_until<now() LIMIT 1",[requested])).rows[0];
-      if(run) run=(await db.query("UPDATE ultron_agent_runs SET attempts=attempts+1,lease_until=now()+interval '4 minutes',updated_at=now() WHERE id=$1 AND status='running' RETURNING id,owner_id,title,objective,status,attempts",[requested])).rows[0];
+      run=(await db.query("UPDATE ultron_agent_runs SET attempts=attempts+1,lease_until=now()+interval '4 minutes',updated_at=now() WHERE id=$1 AND status='running' AND lease_until<now() RETURNING id,owner_id,title,objective,status,attempts",[requested])).rows[0];
     }
   } else {
     run=(await db.query("UPDATE ultron_agent_runs SET status='running',attempts=attempts+1,lease_until=now()+interval '4 minutes',started_at=COALESCE(started_at,now()),updated_at=now() WHERE id=(SELECT id FROM ultron_agent_runs WHERE status='queued' OR (status='running' AND lease_until<now()) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id,owner_id,title,objective,status,attempts")).rows[0];
