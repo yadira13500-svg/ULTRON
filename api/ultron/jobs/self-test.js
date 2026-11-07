@@ -533,8 +533,11 @@ export default async function (req, res) {
   results.push(testClaimContradictionAndSourceIndependence());
   results.push(await testPublicSearch());
   results.push(await testSourceFreshnessFallback());
-  const failed = results.filter(r => !r.ok);
-  console.log('ULTRON self-test', JSON.stringify(results));
-  if (failed.length) return res.status(500).json({ ok: false, failed, results });
-  return res.json({ ok: true, results });
+  const externalNames = new Set(['weather','wikipedia','currency','news','search']);
+  const deterministicFailed = results.filter(r => !r.ok && !externalNames.has(r.name));
+  const externalFailures = results.filter(r => !r.ok && externalNames.has(r.name));
+  const status = deterministicFailed.length ? 'failed' : externalFailures.length ? 'degraded_external_sources' : 'healthy';
+  console.log('ULTRON self-test summary', JSON.stringify({status,total:results.length,deterministicPassed:results.length-deterministicFailed.length-externalFailures.length,deterministicFailures:deterministicFailed.map(x=>x.name),externalFailures:externalFailures.map(x=>({name:x.name,status:x.status||0}))}));
+  if (deterministicFailed.length) return res.status(500).json({ ok: false, status, failed: deterministicFailed, externalFailures, results });
+  return res.json({ ok: true, status, externalFailures, results });
 }

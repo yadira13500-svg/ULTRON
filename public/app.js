@@ -149,6 +149,17 @@ function renderKnowledge(){
  $('#evolutionStatus').textContent=xs.length?'Library synced · '+xs.length+' source record(s) · automated URL checks run hourly; stale or unavailable sources are retained with replacement links when found.':'Library synced · no source records found.';
 }
 async function syncKnowledgeGraph(){try{const r=await req('/evolution','POST',{type:'knowledge_sync'});await loadEvolution();$('#evolutionStatus').textContent+=' · '+r.linked+' source link(s) synced';}catch(e){$('#evolutionStatus').textContent+=' · graph sync unavailable: '+e.message}}
+let openResearchItems=[];
+async function runOpenResearch(q){
+ const query=String(q||'').trim();if(!query)throw new Error('Enter a research topic.');
+ $('#openResearchStatus').textContent='Searching five open indexes in parallel…';$('#openResearchResults').innerHTML='<div class="empty">Searching OpenAlex, Crossref, Europe PMC, PubMed and arXiv…</div>';
+ const r=await req('/knowledge-discovery?q='+encodeURIComponent(query));openResearchItems=r.results||[];
+ $('#openResearchStatus').textContent='Found '+openResearchItems.length+' unique result(s) · '+(r.providers||[]).filter(x=>x.ok).length+' of 5 indexes responded · '+(r.providers||[]).filter(x=>!x.ok).map(x=>x.source+' unavailable').join(', ')+' · Results are not yet verified.';
+ $('#openResearchResults').innerHTML=openResearchItems.length?openResearchItems.map((x,i)=>'<article class="knowledge-card"><strong>'+esc(x.title)+'</strong><p>'+esc(x.summary||'No abstract or summary supplied.')+'</p><div class="knowledge-meta">'+esc(x.source)+' · '+esc(x.kind||'research')+' · '+esc(x.published_at||'Date unavailable')+(x.doi?' · DOI '+esc(x.doi):'')+'</div><a class="knowledge-link" href="'+esc(x.url)+'" target="_blank" rel="noopener noreferrer">Open original record ↗</a><button class="secondary save-source" data-open-research-save="'+i+'">Save to private library</button></article>').join(''):'<div class="empty">No records returned. Try a broader or differently worded query.</div>';
+ return r;
+}
+$('#openResearchForm').addEventListener('submit',async e=>{e.preventDefault();const b=$('#openResearchButton');b.disabled=true;try{const r=await runOpenResearch($('#openResearchQuery').value);toast('Open research search returned '+r.results.length+' records.')}catch(err){$('#openResearchStatus').textContent=err.message;$('#openResearchResults').innerHTML='<div class="empty">The research indexes could not be reached. Try again later.</div>'}finally{b.disabled=false}});
+$('#openResearchResults').addEventListener('click',async e=>{const b=e.target.closest('[data-open-research-save]');if(!b)return;const x=openResearchItems[Number(b.dataset.openResearchSave)];if(!x)return;b.disabled=true;try{const r=await req('/knowledge-discovery','POST',{confirm_save:true,title:x.title,summary:x.summary||x.title,url:x.url,source:x.source,published_at:x.published_at});toast(r.duplicate?'This source is already in your library.':'Source saved to your private knowledge library.');await loadKnowledge($('#knowledgeQuery').value.trim())}catch(err){toast(err.message)}finally{b.disabled=false}});
 async function loadKnowledge(q=''){
  try{const r=await req('/knowledge'+(q?'?q='+encodeURIComponent(q):''));learnedEntries=r.knowledge||[];renderKnowledge();await syncKnowledgeGraph()}
  catch(e){$('#evolutionStatus').textContent='Knowledge library unavailable: '+e.message;$('#knowledgeList').innerHTML='<div class="empty">Sign in to load your private knowledge library.</div>'}
