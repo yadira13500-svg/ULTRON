@@ -40,7 +40,7 @@ function buildPlan(objective, sourceUrls=[]) {
     acceptance.push('Return sourced search leads with titles and URLs; do not treat search snippets as verified facts.');
     acceptance.push('Identify evidence gaps and propose the next source-capture step.');
   } else if(wantsTask) {
-    const cleaned=text.replace(/^(please\s+)?(create|add|make|schedule|remind me to)\s+/i,'').replace(/[.!?]+$/,'').trim();
+    const cleaned=text.replace(/^(please\s+)?(?:(?:create|add|make)\s+(?:a\s+)?(?:task|to-do)\s+(?:to\s+)?|schedule\s+|remind me to\s+)/i,'').replace(/[.!?]+$/,'').trim();
     steps.push({type:'create_task',title:'Save the requested follow-up task',input:{title:cleaned.slice(0,180)||title,body:text},depends_on:[]});
     acceptance.push('Persist the requested task and read it back from the owner-scoped task list.');
   } else {

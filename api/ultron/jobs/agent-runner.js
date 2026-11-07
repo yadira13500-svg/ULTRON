@@ -316,6 +316,11 @@ export default async function(req,res) {
     await db.query("INSERT INTO ultron_agent_lessons(owner_id,lesson_key,lesson,evidence,confidence,status) VALUES($1,$2,$3,$4::jsonb,$5,'candidate') ON CONFLICT(owner_id,lesson_key) DO UPDATE SET lesson=EXCLUDED.lesson,evidence=EXCLUDED.evidence,confidence=GREATEST(ultron_agent_lessons.confidence,EXCLUDED.confidence) WHERE ultron_agent_lessons.status='candidate'",[run.owner_id,lessonKey,lesson,JSON.stringify(evidence),isFailure?0.65:0.55]);
   }
   if(counts.pending===0&&counts.failed===0) {
+    if(counts.completed===0) {
+      const message='Mission had no completed executable steps; an empty run cannot be reported as completed.';
+      await db.query("UPDATE ultron_agent_runs SET status='failed',error=$3,lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2 AND status='running'",[run.id,run.owner_id,message]);
+      return res.json({ok:false,runId:run.id,status:'failed',completedSteps:0,failedSteps:0,verificationStatus:'not_verified',note:message});
+    }
     const fullyOperationallyVerified=counts.completed>0&&counts.verified===counts.completed;
     const learningUsage=(await db.query("SELECT COUNT(DISTINCT step_id)::int AS steps_with_lessons,COUNT(DISTINCT lesson_id)::int AS distinct_lessons FROM (SELECT id AS step_id,jsonb_array_elements(COALESCE(result->'learningContext'->'lessonsConsulted','[]'::jsonb))->>'id' AS lesson_id FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2 AND status='completed') q WHERE lesson_id IS NOT NULL",[run.id,run.owner_id])).rows[0]||{steps_with_lessons:0,distinct_lessons:0};
     const summary={stepsCompleted:counts.completed,stepsVerified:counts.verified,verifiedWork:fullyOperationallyVerified,verificationStatus:fullyOperationallyVerified?'operationally_verified':'partial',verificationScope:'operation_checks_only',factualAccuracyVerified:false,learning:{stepsWithApprovedLessons:learningUsage.steps_with_lessons,distinctApprovedLessonsConsulted:learningUsage.distinct_lessons},completedAt:new Date().toISOString()};
