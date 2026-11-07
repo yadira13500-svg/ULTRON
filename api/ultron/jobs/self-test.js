@@ -9,6 +9,7 @@ import { buildEvidenceRepairProposal, verifyEvidenceRepairProposal, buildRepaire
 import { buildAdaptiveReplan, verifyAdaptiveReplan } from 'lib/mission-replanning.js';
 import { summarizeRecoveryEvidence, recoveryStrategyForRevision, recoveryFailureCategory } from 'lib/recovery-evaluation.js';
 import { analyzeSentence, analyzeClaimEvidence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
+import { buildDocumentContext } from 'lib/document-context.js';
 import { verifyOutcome } from 'lib/outcome.js';
 import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment, recommendLessonStrategies, applyApprovedStrategyPolicy, summarizeStrategyTrialOutcomes } from 'lib/learning-evaluation.js';
 
@@ -338,6 +339,25 @@ function testContextAwareClaimScope() {
   return {name:'context_aware_attribution_scope',ok,semantic:ok,attributionCarriedAcrossSentence:attributed.materialAtomChecks.scope.attributed,previousSentenceIncluded:attributed.materialAtomChecks.scope.contextIncludedPreviousSentence,exactQuotePreserved:attributed.exactQuote==='The regulator approved the medicine.',detail:ok?'The preceding speaker sentence is included in scope review while the selected evidence quote remains independently anchored.':'Neighboring attribution context was missed or the exact selected quote was not preserved.'};
 }
 
+function testDocumentLevelClaimContext() {
+  const claim='The committee approved the measure.';
+  const multiParagraph='BACKGROUND\nThe agency spokesperson said the committee had reviewed the proposal.\n\nDECISION\nThe committee approved the measure.';
+  const context=buildDocumentContext(claim,multiParagraph,multiParagraph.lastIndexOf('The committee approved'),multiParagraph.length);
+  const attribution=analyzeClaimEvidence(claim,[{url:'https://alpha.example/decision',host:'alpha.example',excerpt:multiParagraph}]).perSource[0];
+  const pronounSource='The council and the review panel considered several options.\n\nIt approved the measure.';
+  const pronoun=analyzeClaimEvidence('The committee approved the measure.',[{url:'https://beta.example/decision',host:'beta.example',excerpt:pronounSource}]).perSource[0];
+  const defined='DEFINITIONS\n\nCovered Entity means a registered organization that receives public funding.\n\nA Covered Entity must file an annual report.';
+  const definition=buildDocumentContext('A Covered Entity must file an annual report.',defined,defined.lastIndexOf('A Covered Entity'),defined.length);
+  const quoted=buildDocumentContext('The project was completed.', 'The report quotes the director: “The project was completed.”', 38, 67);
+  const tampered=attribution.contextExcerpt+' altered';
+  const source={url:'https://alpha.example/decision',retrieved:true,excerpt:multiParagraph};
+  const secondSource={url:'https://other.example/decision',host:'other.example',retrieved:true,excerpt:multiParagraph};
+  const twoSourceAssessment=analyzeClaimEvidence(claim,[{url:source.url,host:'alpha.example',excerpt:multiParagraph},secondSource]);
+  const anchorReview=verifyClaimPassageAnchors(twoSourceAssessment.perSource,[source,secondSource],2);
+  const ok=context.contextParagraphCount>=2&&context.contextText.includes('BACKGROUND')&&attribution.materialAtomChecks.scope.attributionAcrossParagraphs===true&&pronoun.materialAtomChecks.scope.pronounAntecedentAmbiguous===true&&pronoun.stance==='related_unclear'&&definition.scope.definitionContextIncluded===true&&definition.contextText.includes('Covered Entity means')&&quoted.scope.quotedMaterial===true&&anchorReview.passed&&tampered!==attribution.contextExcerpt;
+  return {name:'document_level_context_pronouns_quotes_and_definitions',ok,semantic:ok,paragraphContextIncluded:context.contextParagraphCount,attributionAcrossParagraphs:attribution.materialAtomChecks.scope.attributionAcrossParagraphs,pronounAmbiguityFlagged:pronoun.materialAtomChecks.scope.pronounAntecedentAmbiguous,definitionParagraphIncluded:definition.scope.definitionContextIncluded,quotedMaterialFlagged:quoted.scope.quotedMaterial,contextAnchorReadback:anchorReview.passed,detail:ok?'Paragraph and heading context, cross-paragraph attribution, ambiguous pronouns, quoted material and earlier definitions are surfaced while exact source anchors remain independently checked.':'A document-context fixture or independent context-anchor check failed.'};
+}
+
 function testExactClaimPassageAnchors() {
   const claim='The city approved the transit plan in 2025.';
   const sources=[
@@ -454,6 +474,7 @@ export default async function (req, res) {
   results.push(testGeneralOutcomeVerification());
   results.push(testLabeledClaimEvidenceFixtures());
   results.push(testContextAwareClaimScope());
+  results.push(testDocumentLevelClaimContext());
   results.push(testExactClaimPassageAnchors());
   results.push(testExplicitArithmeticEvaluation());
   results.push(testClaimContradictionAndSourceIndependence());
