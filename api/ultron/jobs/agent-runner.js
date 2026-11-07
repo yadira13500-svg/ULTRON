@@ -1,6 +1,7 @@
 import { db, scheduler } from 'hatchable';
 import { analyzeClaimEvidence } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
+import { searchPublicWeb } from 'lib/search.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -94,9 +95,9 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
     return {application:saved.rows[0],skillTitle:skill.title,conceptsConsulted:Array.isArray(skill.concepts_json)?skill.concepts_json.length:0,objectivesConsulted:Array.isArray(skill.objectives_json)?skill.objectives_json.length:0,operationVerified:true,verified:true,note:'A mastered skill is linked to this mission. Record a comparable post-task metric after the practical work to measure change.'};
   }
   if(step.step_type==='research_search') {
-    const data=await quickResearch(String(input.query));
-    const results=(data.results||[]).filter(x=>x&&x.title&&x.url).slice(0,5).map(x=>({title:String(x.title).slice(0,240),url:String(x.url).slice(0,1000),snippet:String(x.snippet||'').slice(0,1200)}));
-    return {query:input.query,results,source:data.source,retrievedAt:data.retrievedAt,operationVerified:results.length>0,verified:false,note:results.length?'Search results are leads, not verified facts. Run a verify_url step before treating a source as checked.':'The free public indexes returned no useful result for this query; no result was invented.'};
+    const data=await searchPublicWeb(String(input.query));
+    const results=(data.results||[]).filter(x=>x&&x.title&&x.url).slice(0,8).map(x=>({title:String(x.title).slice(0,240),url:String(x.url).slice(0,1000),snippet:String(x.snippet||'').slice(0,1200),publisher:String(x.publisher||x.source||'').slice(0,160)}));
+    return {query:input.query,results,source:data.source,retrievedAt:data.retrievedAt||data.fetched_at,operationVerified:results.length>0,verified:false,note:results.length?'Search results are leads, not verified facts. Run source retrieval and claim comparison before relying on them.':'The free public search sources returned no useful result for this query; no result was invented.'};
   }
   if(step.step_type==='verify_url') {
     const result=await verifyUrl(input.url);
