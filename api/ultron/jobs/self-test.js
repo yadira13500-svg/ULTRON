@@ -11,6 +11,7 @@ import { buildAdaptiveReplan, verifyAdaptiveReplan } from 'lib/mission-replannin
 import { summarizeRecoveryEvidence, recoveryStrategyForRevision, recoveryFailureCategory } from 'lib/recovery-evaluation.js';
 import { analyzeSentence, analyzeClaimEvidence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
 import { buildDocumentContext } from 'lib/document-context.js';
+import { memoryRetrievalSelfTest } from 'lib/memory-retrieval.js';
 import { verifyOutcome } from 'lib/outcome.js';
 import { sentinelSafetySelfTest } from 'lib/sentinel-safety.js';
 import { sentinelAssessmentSelfTest } from 'lib/sentinel-assessment.js';
@@ -500,6 +501,7 @@ async function testSourceFreshnessFallback() {
 
 export default async function (req, res) {
   const results = [];
+  results.push(memoryRetrievalSelfTest());
   for (const [name, url] of Object.entries(CHECKS)) results.push(await probe(name, url));
   results.push(testMissionPlanningRegression());
   results.push({name:'balanced_mission_planner_evaluation',...evaluateMissionPlanner(),semantic:true});

@@ -1,4 +1,4 @@
-import { searchPublicWeb } from 'lib/search.js';
+import { searchResearchSources } from 'lib/research-stack.js';
 import { db } from 'hatchable';
 
 export const access = 'admin';
@@ -9,7 +9,7 @@ export default async function (req, res) {
   const country = String(req.query?.country || 'WORLD').toUpperCase();
   if (!q || q.length > 240) return res.status(400).json({ error: 'Enter a research question up to 240 characters.' });
   try {
-    const result = await searchPublicWeb(q, country);
+    const result = await searchResearchSources(q, country, { includeScholarly: true });
     const owner = String(req.member.id);
     const entries = (result.results || []).filter(x => x && x.title && x.url).slice(0, 6);
     for (const item of entries) {
