@@ -32,7 +32,7 @@ export default async function(req,res) {
       const specialistTasks = (await db.query('SELECT id,step_id,phase,specialist_role,capabilities,context_snapshot,status,attempts,lease_until,output,verification,error,created_at,updated_at,completed_at FROM ultron_specialist_tasks WHERE run_id=$1 AND owner_id=$2 ORDER BY created_at,phase',[id,owner])).rows;
       const specialistRevisions = (await db.query('SELECT id,step_id,revision_no,specialist_role,revision_instruction,input_snapshot,prior_output,prior_verification,revised_output,revised_verification,status,error,created_at,completed_at FROM ultron_specialist_revisions WHERE run_id=$1 AND owner_id=$2 ORDER BY created_at,revision_no',[id,owner])).rows;
       const missionRevisions=(await db.query('SELECT id,revision_no,base_plan_version,candidate_plan,affected_positions,preserved_positions,verifier,status,rationale,created_at,reviewed_at FROM ultron_mission_revisions WHERE run_id=$1 AND owner_id=$2 ORDER BY revision_no DESC',[id,owner])).rows;
-      const coordination=buildMissionCoordinationReport(steps,run.result?.acceptance||null);
+      const coordination=buildMissionCoordinationReport(steps,run.result?.acceptance||null,specialistTasks);
       return res.json({run,steps,specialistTasks,specialistRevisions,missionRevisions,coordination});
     }
     const runs = (await db.query('SELECT id,title,objective,status,result,error,attempts,created_at,updated_at,completed_at FROM ultron_agent_runs WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 40',[owner])).rows;

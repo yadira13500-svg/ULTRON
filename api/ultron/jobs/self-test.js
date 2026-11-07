@@ -4,6 +4,7 @@ import { extractResearchQuery, planMission } from 'lib/mission-plan.js';
 import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, shouldRecoverRunningStep, isMissionActive, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
 import { validateMissionGraph, buildMissionCoordinationReport } from 'lib/mission-coordinator.js';
+import { buildMissionIntelligence } from 'lib/mission-intelligence.js';
 import { buildAdaptiveReplan, verifyAdaptiveReplan } from 'lib/mission-replanning.js';
 import { summarizeRecoveryEvidence, recoveryStrategyForRevision, recoveryFailureCategory } from 'lib/recovery-evaluation.js';
 import { analyzeSentence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
@@ -107,6 +108,20 @@ function testRecoveryIntelligence() {
   const category=recoveryFailureCategory('Source retrieval failed: HTTP 403')==='access_denied';
   const ok=measured?.observations===5&&measured.completed===4&&measured.failed===1&&measured.verified===4&&measured.retries===3&&measured.recommendation==='promising_review'&&measured.automaticSelection===false&&measured.causalEffectEstablished===false&&pending?.observations===0&&strategy&&category;
   return {name:'recovery_intelligence_terminal_outcomes_and_human_control',ok,semantic:ok,detail:ok?'Only approved revisions with terminal outcomes contribute; pending and rejected proposals do not inflate success; retries are measured; five-outcome recommendations remain advisory and non-causal.':'Recovery evidence counted an ineligible revision or violated the owner-approval boundary.',measured:measured?{observations:measured.observations,verified:measured.verified,retries:measured.retries,recommendation:measured.recommendation}:null,pendingObservations:pending?.observations??null};
+}
+
+function testMissionIntelligenceAdjudication() {
+ const sources=[
+  {position:1,step_type:'retrieve_source',status:'completed',result:{retrieved:true,url:'https://alpha.example/report',canonicalUrl:'https://alpha.example/report',publisher:'Alpha Research',title:'Report A',publicationDate:{iso:new Date().toISOString()},excerpt:'The project reached 42 units in the measured period.',retrievedAt:new Date().toISOString()}},
+  {position:2,step_type:'retrieve_source',status:'completed',result:{retrieved:true,url:'https://beta.example/report',canonicalUrl:'https://beta.example/report',publisher:'Beta Institute',title:'Report B',publicationDate:{iso:new Date().toISOString()},excerpt:'Independent analysis found the project reached 42 units in the measured period.',retrievedAt:new Date().toISOString()}}
+ ];
+ const claim={position:3,step_type:'assess_claim',status:'completed',title:'Assess reported total',input:{claim:'The project reached 42 units.'},result:{claim:'The project reached 42 units.',allSources:[{url:sources[0].result.url,publisher:'Alpha Research'},{url:sources[1].result.url,publisher:'Beta Institute'}],deepAnalysis:{status:'evidence_candidates_found',supportingSourceCount:2,contradictingSourceCount:0,independentSupportGroups:2,perSource:[{stance:'supports_candidate'},{stance:'supports_candidate'}],reasons:[]},contradictionCandidates:[]}};
+ const good=buildMissionIntelligence([...sources,claim],{status:'criteria_met',counts:{unmet:0,needs_review:0}},[]);
+ const conflictClaim={...claim,result:{...claim.result,deepAnalysis:{...claim.result.deepAnalysis,status:'conflicting_evidence',contradictingSourceCount:1,perSource:[{stance:'supports_candidate'},{stance:'contradicts_candidate'}]},contradictionCandidates:[{source:sources[1].result.url,excerpt:'The measured result was not 42 units.'}]}};
+ const conflict=buildMissionIntelligence([...sources,conflictClaim],{status:'criteria_met',counts:{unmet:0,needs_review:0}},[]);
+ const challenged=buildMissionIntelligence([...sources,claim],null,[{phase:'verification',status:'failed',specialist_role:'verifier',verification:{passed:false,challenge:['Evidence is incomplete.']}}]);
+ const ok=good.evidence.capturedSources===2&&good.evidence.independentPublisherGroups===2&&good.factualAssessment.claimsNeedingMoreEvidence===0&&good.factualAssessment.verifiedTruth===false&&conflict.decisionReadiness==='evidence_conflicts_need_review'&&conflict.factualAssessment.conflictSignals===1&&challenged.decisionReadiness==='specialist_verification_incomplete'&&good.evidence.undatedSources===0;
+ return {name:'mission_intelligence_evidence_adjudication_and_review_boundaries',ok,semantic:ok,detail:ok?'Mission intelligence distinguishes two independent supporting publishers from unresolved contradiction signals, detects verifier challenges, and never labels factual truth as verified.':'Evidence grouping, conflict readiness, freshness metadata or factual-review boundary regressed.',good:{sources:good.evidence.capturedSources,publisherGroups:good.evidence.independentPublisherGroups,decision:good.decisionReadiness},conflict:{decision:conflict.decisionReadiness,signals:conflict.factualAssessment.conflictSignals},verifierChallenge:challenged.decisionReadiness};
 }
 
 function testMissionCoordinationReview() {
@@ -352,6 +367,7 @@ export default async function (req, res) {
   for (const [name, url] of Object.entries(CHECKS)) results.push(await probe(name, url));
   results.push(testMissionPlanningRegression());
   results.push(testMissionCoordinationReview());
+  results.push(testMissionIntelligenceAdjudication());
   results.push(testAdaptiveMissionReplanning());
   results.push(testRecoveryIntelligence());
   results.push(testMissionRuntimePolicies());
