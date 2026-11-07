@@ -5,7 +5,7 @@ import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRole
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
 import { analyzeSentence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
-import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment, recommendLessonStrategies } from 'lib/learning-evaluation.js';
+import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment, recommendLessonStrategies, applyApprovedStrategyPolicy } from 'lib/learning-evaluation.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -140,8 +140,12 @@ function testAdaptiveStrategyRecommendations() {
   events.push({lessonId:'small',stepType:'verify_url',outcome:'operationally_verified',verifierPassed:true});
   const recs=recommendLessonStrategies(lessons,events,5);
   const byId=Object.fromEntries(recs.map(x=>[x.lessonId,x]));
-  const ok=byId.promising?.recommendation==='retain_for_human_review'&&byId.weak?.recommendation==='investigate_before_reuse'&&byId.mixed?.recommendation==='mixed_results_review'&&byId.small?.recommendation==='collect_more_evidence'&&recs.every(x=>x.automaticSelection===false&&x.automaticPromotion===false)&&byId.weak.verifierRejections===4;
-  return {name:'adaptive_strategy_recommendations',ok,semantic:ok,detail:ok?'Evidence thresholds distinguish promising, weak, mixed and insufficient strategies; verifier rejections count against a lesson; recommendations never auto-select or promote.':'Strategy recommendation thresholds or human-approval boundaries regressed.',recommendations:recs.map(x=>({lessonId:x.lessonId,recommendation:x.recommendation,observations:x.observations,verified:x.verified,verifierRejections:x.verifierRejections}))};
+  const selected=applyApprovedStrategyPolicy(lessons,{enabled:true,stepType:'verify_url',lessonId:'promising'});
+  const crossType=applyApprovedStrategyPolicy(lessons,{enabled:true,stepType:'research_search',lessonId:'promising'});
+  const unchanged=applyApprovedStrategyPolicy(lessons,{enabled:false,stepType:'verify_url',lessonId:'promising'});
+  const policySafe=selected.length===1&&selected[0].id==='promising'&&crossType.length===0&&unchanged.length===lessons.length;
+  const ok=byId.promising?.recommendation==='retain_for_human_review'&&byId.weak?.recommendation==='investigate_before_reuse'&&byId.mixed?.recommendation==='mixed_results_review'&&byId.small?.recommendation==='collect_more_evidence'&&recs.every(x=>x.automaticSelection===false&&x.automaticPromotion===false)&&byId.weak.verifierRejections===4&&policySafe;
+  return {name:'adaptive_strategy_recommendations',ok,semantic:ok,detail:ok?'Evidence thresholds distinguish promising, weak, mixed and insufficient strategies; verifier rejections count against a lesson; only an explicitly approved, same-step-type strategy is selected; disabled or cross-type policies cannot alter execution.':'Strategy recommendation thresholds or human-approval boundaries regressed.',policySafe,recommendations:recs.map(x=>({lessonId:x.lessonId,recommendation:x.recommendation,observations:x.observations,verified:x.verified,verifierRejections:x.verifierRejections}))};
 }
 
 function testCancellationGuards() {

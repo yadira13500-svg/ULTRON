@@ -23,10 +23,11 @@ export default async function(req,res){
   const lessonObservations=specialistHistory.rows.flatMap(row=>Array.isArray(row.context_snapshot?.lessonObservations)?row.context_snapshot.lessonObservations:[]);
   const learningEffectiveness=summarizeLessonEffectiveness(lessonObservations);
   const strategyRecommendations=recommendLessonStrategies(l.rows,lessonObservations,5);
+  const activeStrategyPolicies=(await db.query('SELECT step_type,lesson_id,active,approved_at,updated_at FROM ultron_strategy_policies WHERE owner_id=$1 AND active=true ORDER BY step_type',[owner])).rows;
   const experimentConfig=(await db.query('SELECT enabled,min_per_cohort,updated_at FROM ultron_lesson_experiments WHERE owner_id=$1',[owner])).rows[0]||{enabled:false,min_per_cohort:5};
   const experimentEvents=specialistHistory.rows.flatMap(row=>Array.isArray(row.context_snapshot?.experimentObservations)?row.context_snapshot.experimentObservations:[]);
   const lessonExperimentResults=summarizeLessonExperiment(experimentEvents,experimentConfig.min_per_cohort);
-  return res.json({preferences:p.rows,nodes:n.rows,edges:e.rows,researchPlans:r.rows,feedback:f.rows,skills:s.rows,skillAssessments:assessments.rows,skillApplications:applications.rows,suggestions:g.rows,agentLessons:l.rows,claimReviews:c.rows,learningEffectiveness,strategyRecommendations,lessonExperiment:{...experimentConfig,results:lessonExperimentResults},domains});
+  return res.json({preferences:p.rows,nodes:n.rows,edges:e.rows,researchPlans:r.rows,feedback:f.rows,skills:s.rows,skillAssessments:assessments.rows,skillApplications:applications.rows,suggestions:g.rows,agentLessons:l.rows,claimReviews:c.rows,learningEffectiveness,strategyRecommendations,activeStrategyPolicies,lessonExperiment:{...experimentConfig,results:lessonExperimentResults},domains});
  }
  if(req.method==='POST'){
   const type=String(b.type||'');
@@ -34,6 +35,20 @@ export default async function(req,res){
    if(typeof b.enabled!=='boolean')return res.status(400).json({error:'Provide an explicit enabled true/false value.'});
    const saved=(await db.query('INSERT INTO ultron_lesson_experiments(owner_id,enabled,min_per_cohort) VALUES($1,$2,5) ON CONFLICT(owner_id) DO UPDATE SET enabled=EXCLUDED.enabled,updated_at=now() RETURNING enabled,min_per_cohort,updated_at',[owner,b.enabled])).rows[0];
    return res.json({lessonExperiment:saved,note:b.enabled?'Opt-in experiment enabled. Only eligible research and verification steps with matching approved lessons will be assigned to treatment or control.':'Experiment disabled. Normal approved lessons will be applied to eligible future steps; existing in-flight assignments remain unchanged.'});
+  }
+  if(type==='strategy_policy'){
+   const stepType=String(b.step_type||'').trim();
+   if(!/^[a-z_]{2,80}$/.test(stepType))return res.status(400).json({error:'A valid mission step type is required.'});
+   if(b.enabled===false){const removed=await db.query('DELETE FROM ultron_strategy_policies WHERE owner_id=$1 AND step_type=$2 RETURNING step_type',[owner,stepType]);return res.json({ok:true,active:false,stepType,removed:removed.rowCount>0,note:'The preferred strategy was cleared. ULTRON will return to its normal approved-lesson selection for future missions.'});}
+   if(b.enabled!==true||!b.lesson_id)return res.status(400).json({error:'Explicit approval and an approved lesson ID are required.'});
+   const lesson=(await db.query("SELECT id,lesson,evidence,confidence,status FROM ultron_agent_lessons WHERE id=$1 AND owner_id=$2 AND status='approved' AND evidence->>'stepType'=$3",[String(b.lesson_id),owner,stepType])).rows[0];
+   if(!lesson)return res.status(404).json({error:'That owner-approved lesson was not found for this mission step type.'});
+   const history=(await db.query("SELECT context_snapshot FROM ultron_specialist_tasks WHERE owner_id=$1 AND phase='execution' ORDER BY updated_at DESC LIMIT 500",[owner])).rows;
+   const observations=history.flatMap(row=>Array.isArray(row.context_snapshot?.lessonObservations)?row.context_snapshot.lessonObservations:[]);
+   const recommendation=recommendLessonStrategies([lesson],observations,5)[0];
+   if(recommendation?.recommendation!=='retain_for_human_review')return res.status(409).json({error:'This strategy does not meet the approval threshold. ULTRON requires at least five terminal observations and at least 80% independently verifier-passed operational outcomes.',recommendation});
+   const saved=(await db.query('INSERT INTO ultron_strategy_policies(owner_id,step_type,lesson_id,active) VALUES($1,$2,$3,true) ON CONFLICT(owner_id,step_type) DO UPDATE SET lesson_id=EXCLUDED.lesson_id,active=true,approved_at=now(),updated_at=now() RETURNING step_type,lesson_id,active,approved_at,updated_at',[owner,stepType,String(lesson.id)])).rows[0];
+   return res.json({ok:true,policy:saved,note:'Strategy approved. Future matching missions will prioritize this approved lesson only; existing in-flight missions retain their saved strategy snapshot. Independent verification remains required.'});
   }
   if(type==='knowledge_sync'){
    const {rows}=await db.query("SELECT id,topic,summary,source_url,source_name,published_at,source_status FROM ultron_knowledge WHERE owner_id=$1 AND source_url LIKE 'https://%' AND source_status='available' ORDER BY created_at DESC LIMIT 100",[owner]);

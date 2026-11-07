@@ -4,7 +4,7 @@ import { verifyOutcome } from 'lib/outcome.js';
 import { searchPublicWeb } from 'lib/search.js';
 import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, shouldRecoverRunningStep, isMissionActive, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
-import { createLessonObservationEvents, assignLessonExperiment, createExperimentObservationEvent } from 'lib/learning-evaluation.js';
+import { createLessonObservationEvents, assignLessonExperiment, createExperimentObservationEvent, applyApprovedStrategyPolicy } from 'lib/learning-evaluation.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -301,7 +301,14 @@ export default async function(req,res) {
     let experimentAssignment=null;
     let verifierRejectionCount=0;
     try {
-      approvedLessons=(await db.query("SELECT id,lesson,confidence,evidence FROM ultron_agent_lessons WHERE owner_id=$1 AND status='approved' AND evidence->>'stepType'=$2 ORDER BY reviewed_at DESC LIMIT 3",[run.owner_id,step.step_type])).rows;
+      let strategyPolicy=executionTask.context_snapshot?.strategyPolicy;
+      if(!strategyPolicy){
+        const configuredPolicy=(await db.query("SELECT step_type,lesson_id FROM ultron_strategy_policies WHERE owner_id=$1 AND step_type=$2 AND active=true",[run.owner_id,step.step_type])).rows[0];
+        strategyPolicy=configuredPolicy?{enabled:true,stepType:String(configuredPolicy.step_type),lessonId:String(configuredPolicy.lesson_id)}:{enabled:false,stepType:String(step.step_type),lessonId:null};
+        await db.query("UPDATE ultron_specialist_tasks SET context_snapshot=COALESCE(context_snapshot,'{}'::jsonb)||jsonb_build_object('strategyPolicy',$3::jsonb),updated_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND EXISTS(SELECT 1 FROM ultron_agent_runs WHERE id=$4 AND owner_id=$2 AND status='running')",[executionTask.id,run.owner_id,JSON.stringify(strategyPolicy),run.id]);
+      }
+      approvedLessons=(await db.query("SELECT id,lesson,confidence,evidence FROM ultron_agent_lessons WHERE owner_id=$1 AND status='approved' AND evidence->>'stepType'=$2 AND ($3::text IS NULL OR id=$3) ORDER BY CASE WHEN id=$3 THEN 0 ELSE 1 END,reviewed_at DESC LIMIT 3",[run.owner_id,step.step_type,strategyPolicy.enabled?strategyPolicy.lessonId:null])).rows;
+      approvedLessons=applyApprovedStrategyPolicy(approvedLessons,strategyPolicy);
       experimentAssignment=executionTask.context_snapshot?.lessonExperiment;
       if(!experimentAssignment){
         const experimentConfig=(await db.query("SELECT enabled FROM ultron_lesson_experiments WHERE owner_id=$1",[run.owner_id])).rows[0];
