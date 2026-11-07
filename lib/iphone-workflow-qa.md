@@ -1,6 +1,6 @@
 # ULTRON iPhone workflow acceptance checklist
 
-This is a test plan, not a claim that a physical iPhone run has already passed. The current build environment can inspect and test the deployed code and APIs, but cannot drive Safari on the owner's physical iPhone or emulate its microphone/camera permission sheets.
+The owner has confirmed that ULTRON has been added to the iPhone Home Screen, launches there and works. This is owner-reported acceptance for the Home Screen launch/use workflow, not a claim that every physical-device checklist item has passed. The build environment cannot independently drive the owner's iPhone or emulate its microphone/camera permission sheets.
 
 ## Existing mobile implementation inspected
 - Responsive viewport includes `viewport-fit=cover`.
@@ -21,7 +21,7 @@ This is a test plan, not a claim that a physical iPhone run has already passed. 
 7. Cancel a queued mission and retry a failed mission; verify status and steps after refresh.
 8. Test microphone dictation and voice conversation after explicit Safari permission; deny permission and confirm the rest of the app still works.
 9. Test camera start, capture, stop and permission denial; verify the camera remains off unless explicitly started and is stopped when requested.
-10. Add ULTRON to the Home Screen, launch standalone, and check notch/Dynamic Island and home-indicator safe areas.
+10. <b>Owner-confirmed:</b> ULTRON is added to the Home Screen, launches standalone and works. Still inspect notch/Dynamic Island and home-indicator safe areas explicitly; those layout checks are not confirmed by the owner's general report.
 11. Test with VoiceOver, larger text, reduced motion and a slow network; confirm labels, focus order and clear error states.
 
 ## Pass evidence to record
@@ -31,4 +31,4 @@ This is a test plan, not a claim that a physical iPhone run has already passed. 
 - Permission state for microphone and camera.
 - No sensitive account information or credentials in screenshots.
 
-Do not mark mobile acceptance complete until these tests are run on a real iPhone or a trustworthy iOS simulator.
+The Home Screen launch/use item is owner-confirmed. Do not mark overall mobile acceptance complete until the remaining device-specific checks are run and recorded on a real iPhone or trustworthy iOS simulator.

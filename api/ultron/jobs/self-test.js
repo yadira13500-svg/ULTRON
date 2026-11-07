@@ -5,7 +5,7 @@ import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRole
 import { verifyStepResult, buildRevisionRequest } from 'lib/specialist-verifier.js';
 import { analyzeSentence, stanceOf, sourceIndependence, evaluateExplicitCalculation } from 'lib/claims.js';
 import { verifyOutcome } from 'lib/outcome.js';
-import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment } from 'lib/learning-evaluation.js';
+import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment, recommendLessonStrategies } from 'lib/learning-evaluation.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -122,6 +122,26 @@ function testLessonExperimentMeasurement() {
   const small=summarizeLessonExperiment(events.slice(0,8),5)[0];
   const ok=summary?.treatment.attempts===5&&summary.control.attempts===5&&summary.treatment.verified===4&&summary.treatment.verifierRejections===1&&summary.control.verified===3&&summary.evidenceLevel==='descriptive_comparison'&&summary.differencePercentagePoints===20&&summary.causalEffectEstablished===false&&small?.evidenceLevel==='insufficient_evidence';
   return {name:'lesson_experiment_cohort_measurement',ok,semantic:ok,detail:ok?'Treatment and control remain separate; only verifier-passed completions count; both cohorts need the configured minimum; comparison is explicitly non-causal.':'Experiment cohort metrics were miscounted or overstated.',summary,smallSampleLevel:small?.evidenceLevel};
+}
+
+function testAdaptiveStrategyRecommendations() {
+  const lessons=[
+    {id:'promising',lesson:'Promising strategy',status:'approved',evidence:{stepType:'verify_url'}},
+    {id:'weak',lesson:'Weak strategy',status:'approved',evidence:{stepType:'verify_url'}},
+    {id:'mixed',lesson:'Mixed strategy',status:'approved',evidence:{stepType:'verify_url'}},
+    {id:'small',lesson:'Small sample',status:'approved',evidence:{stepType:'verify_url'}}
+  ];
+  const events=[];
+  for(let i=0;i<5;i++){
+    events.push({lessonId:'promising',stepType:'verify_url',outcome:i===4?'retryable_failure':'operationally_verified',verifierPassed:i!==4});
+    events.push({lessonId:'weak',stepType:'verify_url',outcome:i===0?'operationally_verified':'verifier_rejected',verifierPassed:i===0});
+    events.push({lessonId:'mixed',stepType:'verify_url',outcome:i<3?'operationally_verified':'failed',verifierPassed:i<3});
+  }
+  events.push({lessonId:'small',stepType:'verify_url',outcome:'operationally_verified',verifierPassed:true});
+  const recs=recommendLessonStrategies(lessons,events,5);
+  const byId=Object.fromEntries(recs.map(x=>[x.lessonId,x]));
+  const ok=byId.promising?.recommendation==='retain_for_human_review'&&byId.weak?.recommendation==='investigate_before_reuse'&&byId.mixed?.recommendation==='mixed_results_review'&&byId.small?.recommendation==='collect_more_evidence'&&recs.every(x=>x.automaticSelection===false&&x.automaticPromotion===false)&&byId.weak.verifierRejections===4;
+  return {name:'adaptive_strategy_recommendations',ok,semantic:ok,detail:ok?'Evidence thresholds distinguish promising, weak, mixed and insufficient strategies; verifier rejections count against a lesson; recommendations never auto-select or promote.':'Strategy recommendation thresholds or human-approval boundaries regressed.',recommendations:recs.map(x=>({lessonId:x.lessonId,recommendation:x.recommendation,observations:x.observations,verified:x.verified,verifierRejections:x.verifierRejections}))};
 }
 
 function testCancellationGuards() {
@@ -276,6 +296,7 @@ export default async function (req, res) {
   results.push(testAdaptiveLearningMeasurement());
   results.push(testLessonExperimentAllocation());
   results.push(testLessonExperimentMeasurement());
+  results.push(testAdaptiveStrategyRecommendations());
   results.push(testCancellationGuards());
   results.push(testMissionGraphPolicy());
   results.push(testSpecialistRevisionPolicy());
