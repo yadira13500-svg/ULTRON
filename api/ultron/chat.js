@@ -75,7 +75,7 @@ async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia')
       if (toolsRan.length) {
         if (!nudgedAfterTools) {
           nudgedAfterTools = true;
-          convo.push({ role: 'user', content: 'Now reply to the user in plain sentences: confirm what you just did and also answer every other part of their request (use getDateTime for any date or time question).' });
+          convo.push({ role: 'user', content: 'Confirm to the user in one short, plain sentence what you just did.' });
           continue;
         }
         return { text: 'Done. I completed that for you (' + [...new Set(toolsRan)].join(', ') + '). Check your lists to confirm.', usage: null, steps: step };
