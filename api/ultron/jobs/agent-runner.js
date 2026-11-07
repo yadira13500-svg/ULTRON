@@ -113,8 +113,12 @@ async function executeStep(step, owner, runId, approvedLessons=[]) {
   }
   if(step.step_type==='research_search') {
     const data=await searchResearchSources(String(input.query),'WORLD',{includeScholarly:true});
-    const results=(data.results||[]).filter(x=>x&&x.title&&x.url).slice(0,8).map(x=>({title:String(x.title).slice(0,240),url:String(x.url).slice(0,1000),snippet:String(x.snippet||'').slice(0,1200),publisher:String(x.publisher||x.source||'').slice(0,160)}));
-    return {query:input.query,results,source:data.source,retrievedAt:data.retrievedAt||data.fetched_at,operationVerified:results.length>0,verified:false,note:results.length?'Search results are leads, not verified facts. Run source retrieval and claim comparison before relying on them.':'The free public search sources returned no useful result for this query; no result was invented.'};
+    const all=(data.results||[]).filter(x=>x&&x.title&&x.url);
+    const web=all.filter(x=>x.source_kind!=='scholarly_index'), scholarly=all.filter(x=>x.source_kind==='scholarly_index');
+    const selected=[...web.slice(0,5),...scholarly.slice(0,3)];
+    for(const item of all)if(selected.length<8&&!selected.includes(item))selected.push(item);
+    const results=selected.slice(0,8).map(x=>({title:String(x.title).slice(0,240),url:String(x.url).slice(0,1000),snippet:String(x.snippet||'').slice(0,1200),publisher:String(x.publisher||x.source||'').slice(0,160),source_kind:x.source_kind||'web',kind:x.kind||null,doi:x.doi||null,published_at:x.published_at||''}));
+    return {query:input.query,results,source:data.source,retrievedAt:data.retrievedAt||data.fetched_at,research_coverage:data.research_coverage||{},operationVerified:results.length>0,verified:false,note:results.length?'Search results are leads, not verified facts. Web and scholarly leads are retained separately; source capture, passage comparison and human review are still required.':'The free public and scholarly search sources returned no useful result for this query; no result was invented.'};
   }
   if(step.step_type==='verify_url') {
     const result=await verifyUrl(input.url);

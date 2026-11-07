@@ -3,7 +3,7 @@ import { searchPublicWeb } from 'lib/search.js';
 import { extractResearchQuery, planMission } from 'lib/mission-plan.js';
 import { evaluateMissionPlanner } from 'lib/mission-plan-evaluation.js';
 import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, shouldRecoverRunningStep, isMissionActive, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
-import { verifyStepResult, buildRevisionRequest, verifyClaimPassageAnchors } from 'lib/specialist-verifier.js';
+import { verifyStepResult, buildRevisionRequest, verifyClaimPassageAnchors, verifyResearchSearchResult } from 'lib/specialist-verifier.js';
 import { validateMissionGraph, buildMissionCoordinationReport } from 'lib/mission-coordinator.js';
 import { buildMissionIntelligence } from 'lib/mission-intelligence.js';
 import { buildEvidenceRepairProposal, verifyEvidenceRepairProposal, buildRepairedClaimAssessmentPlan } from 'lib/evidence-repair.js';
@@ -476,6 +476,23 @@ function testClaimContradictionAndSourceIndependence() {
   return {name:'claim_contradiction_and_source_independence',ok,semantic:ok,detail:ok?'Seeded polarity conflict and shared-origin/copied-text signals were detected.':'Claim conflict or source grouping failed.',polarityConflict:contradiction.valenceConflict,sameDomainGroups:sameOrigin.independentGroupCount,copiedTextGroups:copied.independentGroupCount};
 }
 
+function testResearchQualityVerifier() {
+ const good={verified:false,research_coverage:{scholarly_search_attempted:true,scholarly_results:2,providers:[{source:'Crossref',ok:true},{source:'PubMed',ok:true}]},results:[
+  {title:'Official benchmark',url:'https://docs.example.org/benchmark',source_kind:'web'},
+  {title:'Independent evaluation',url:'https://lab.example.net/evaluation',source_kind:'web'},
+  {title:'Peer reviewed paper',url:'https://doi.org/10.1000/example',source_kind:'scholarly_index'},
+  {title:'Technical report',url:'https://research.example.edu/report',source_kind:'web'}
+ ]};
+ const weak={verified:false,research_coverage:{scholarly_search_attempted:true,scholarly_results:2,providers:[{source:'Crossref',ok:true}]},results:[
+  {title:'Copy one',url:'https://same.example/a',source_kind:'web'},
+  {title:'Copy two',url:'https://same.example/b',source_kind:'web'},
+  {title:'Copy three',url:'https://same.example/c',source_kind:'web'}
+ ]};
+ const pass=verifyResearchSearchResult(good),fail=verifyResearchSearchResult(weak);
+ const ok=pass.passed&&!fail.passed&&pass.distinctHostCount===4&&pass.validLeadCount===4;
+ return {name:'independent_research_quality_verification',ok,semantic:ok,goodPassed:pass.passed,weakRejected:!fail.passed,distinctHosts:pass.distinctHostCount,goodChecks:pass.checks.map(x=>x.name),failedWeakChecks:fail.challenge,detail:ok?'Verifier checks titled HTTPS leads, host diversity, reported scholarly coverage and inclusion of scholarly results without asserting factual truth.':'Research quality verifier accepted weak source coverage or rejected a valid mixed-source fixture.'};
+}
+
 async function testSourceFreshnessFallback() {
   const calls = [];
   const fakeFetch = async (url, options) => {
@@ -502,6 +519,7 @@ async function testSourceFreshnessFallback() {
 export default async function (req, res) {
   const results = [];
   results.push(memoryRetrievalSelfTest());
+  results.push(testResearchQualityVerifier());
   for (const [name, url] of Object.entries(CHECKS)) results.push(await probe(name, url));
   results.push(testMissionPlanningRegression());
   results.push({name:'balanced_mission_planner_evaluation',...evaluateMissionPlanner(),semantic:true});
