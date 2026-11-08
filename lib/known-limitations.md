@@ -1,8 +1,8 @@
 # ULTRON — Known limitations and remediation register
 
-Last audited: 2026-11-08. Live release at audit: v304; browser worker hardening is being prepared for the next release.
+Last audited: 2026-11-08. Live release at the previous audit: v305; the current test-report transparency changes are staged for v306.
 
-This register separates verified behavior from unverified capability. A passing backend self-test does not prove browser GPU inference, microphone/camera permissions, or factual accuracy.
+This register separates verified behavior from unverified capability. A passing backend self-test does not prove browser GPU inference, microphone/camera permissions, or factual accuracy. Test reports now classify each check as live external HTTP, live PostgreSQL integration, in-process regression, scorer-only, or harness-integrity. They explicitly report that neural inference, owner-device acceptance, and paid-provider inference were not executed by the backend suite.
 
 ## Verified operational baseline
 - Existing project only: `ultron-ptje`; private/personal visibility preserved.

@@ -642,11 +642,41 @@ export default async function (req, res) {
   results.push(testClaimContradictionAndSourceIndependence());
   results.push(await testPublicSearch());
   results.push(await testSourceFreshnessFallback());
+  const duplicateNames = results.map(x => x.name).filter((name, index, all) => !name || all.indexOf(name) !== index);
+  const malformedResults = results.filter(x => !x || typeof x.name !== 'string' || typeof x.ok !== 'boolean');
+  const reportIntegrityOk = duplicateNames.length === 0 && malformedResults.length === 0;
+  results.push({
+    name: 'self_test_report_integrity',
+    ok: reportIntegrityOk,
+    semantic: false,
+    duplicateNames,
+    malformedResultCount: malformedResults.length,
+    detail: reportIntegrityOk ? 'Every check has a unique name and an explicit boolean outcome.' : 'The test report contains duplicate names or results without explicit boolean outcomes.'
+  });
+
   const externalNames = new Set(['weather','wikipedia','currency','news','search']);
   const deterministicFailed = results.filter(r => !r.ok && !externalNames.has(r.name));
   const externalFailures = results.filter(r => !r.ok && externalNames.has(r.name));
+  const classifiedResults = results.map(r => {
+    if (externalNames.has(r.name)) return { ...r, testClass: 'live_external_integration', evidence: 'Real outbound HTTP request with response-schema checks.' };
+    if (r.name === 'database_concurrency_recovery_stress') return { ...r, testClass: 'live_database_integration', evidence: 'Isolated synthetic rows exercised against the deployed PostgreSQL database; cleanup is attempted.' };
+    if (r.name === 'specialist_known_answer_benchmark_rubric') return { ...r, testClass: 'scorer_self_test', evidence: 'Positive and deliberately-wrong controls test the scoring rubric only; no neural model inference is performed.' };
+    if (r.name === 'self_test_report_integrity') return { ...r, testClass: 'test_harness_integrity', evidence: 'Checks uniqueness and explicit outcomes in this run.' };
+    return { ...r, testClass: 'in_process_regression', evidence: 'Production module functions are executed in-process with controlled test inputs; this is not live provider inference or device acceptance.' };
+  });
+  const counts = classifiedResults.reduce((acc, r) => { acc[r.testClass] = (acc[r.testClass] || 0) + 1; return acc; }, {});
   const status = deterministicFailed.length ? 'failed' : externalFailures.length ? 'degraded_external_sources' : 'healthy';
-  console.log('ULTRON self-test summary', JSON.stringify({status,total:results.length,deterministicPassed:results.length-deterministicFailed.length-externalFailures.length,deterministicFailures:deterministicFailed.map(x=>x.name),externalFailures:externalFailures.map(x=>({name:x.name,status:x.status||0}))}));
-  if (deterministicFailed.length) return res.status(500).json({ ok: false, status, failed: deterministicFailed, externalFailures, results });
-  return res.json({ ok: true, status, externalFailures, results });
+  const coverage = {
+    liveExternalHttpChecks: counts.live_external_integration || 0,
+    liveDatabaseChecks: counts.live_database_integration || 0,
+    inProcessRegressionChecks: counts.in_process_regression || 0,
+    scorerOnlyChecks: counts.scorer_self_test || 0,
+    harnessIntegrityChecks: counts.test_harness_integrity || 0,
+    liveNeuralInferenceExecuted: false,
+    ownerIPhoneDeviceTestsExecuted: false,
+    paidProviderInferenceExecuted: false
+  };
+  console.log('ULTRON self-test summary', JSON.stringify({status,total:classifiedResults.length,counts,coverage,deterministicFailures:deterministicFailed.map(x=>x.name),externalFailures:externalFailures.map(x=>({name:x.name,status:x.status||0}))}));
+  if (deterministicFailed.length) return res.status(500).json({ ok: false, status, failed: deterministicFailed, externalFailures, coverage, results: classifiedResults });
+  return res.json({ ok: true, status, coverage, externalFailures, results: classifiedResults });
 }
