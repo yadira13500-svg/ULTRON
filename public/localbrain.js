@@ -5,6 +5,8 @@
   const listeners=new Set();
   const state={ready:false,loading:false,model:MODEL_ID,backend:'webgpu',lastLatencyMs:null,lastError:null};
   const emit=()=>{for(const fn of listeners){try{fn({...state})}catch{}}};
+  function rejectPending(reason){for(const item of pending.values()){try{item.reject(reason)}catch{}}pending.clear();}
+  function failWorker(message){const error=new Error(message||'Local model worker stopped unexpectedly.');rejectPending(error);worker=null;ready=false;loading=false;state.ready=false;state.loading=false;state.lastError=error.message;state.statusText=error.message;emit();}
   function ensureWorker(){
     if(worker)return worker;
     if(!('Worker'in window))throw new Error('This browser does not support background workers required by the local model.');
@@ -22,7 +24,8 @@
         else {loading=false;state.loading=false;state.lastError=data.message||'Local model failed to load.';state.statusText=state.lastError;emit();}
       }
     };
-    worker.onerror=event=>{state.lastError=event.message||'Local model worker failed.';state.statusText=state.lastError;loading=false;state.loading=false;emit();};
+    worker.onerror=event=>{failWorker(event.message||'Local model worker failed. Reload the local model and retry.');};
+    worker.onmessageerror=()=>{failWorker('The local model worker returned an unreadable message. Reload the local model and retry.');};
     return worker;
   }
   const api={
