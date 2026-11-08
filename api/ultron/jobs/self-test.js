@@ -173,8 +173,10 @@ function testMissionRuntimePolicies() {
   const permanent=classifyStepFailure('HTTP 404',1);
   const roles=specialistRoleForStep('research_search')==='researcher'&&specialistRoleForStep('assess_claim')==='analyst'&&specialistRoleForStep('create_task')==='executor';
   const fencing=isCurrentAttempt(4,4)&&!isCurrentAttempt(3,4)&&!isCurrentAttempt(0,0)&&!isCurrentAttempt('NaN',4);
-  const ok=depsBlocked&&depsReady&&retry.retry&&exhausted.terminal&&statusOnly.retry&&!permanent.transient&&!permanent.retry&&roles&&fencing&&MAX_SPECIALIST_CONCURRENCY===3;
-  return {name:'mission_runtime_dependency_retry_and_roles',ok,semantic:ok,detail:ok?'Dependency gating, transient retry, stale-attempt fencing, permanent-failure handling and role routing passed.':'A dependency, retry, stale-attempt fence, permanent-failure or specialist-role policy regressed.',statusOnlyRetry:statusOnly.retry,permanentFailureNotRetried:!permanent.retry,staleAttemptRejected:!isCurrentAttempt(3,4),maxParallel:MAX_SPECIALIST_CONCURRENCY};
+  const executionBase=7,verifierBase=3,revisionCount=1;
+  const revisionAttempts=executionBase+revisionCount===8&&verifierBase+revisionCount===4&&isCurrentAttempt(executionBase+revisionCount,8)&&!isCurrentAttempt(executionBase,8);
+  const ok=depsBlocked&&depsReady&&retry.retry&&exhausted.terminal&&statusOnly.retry&&!permanent.transient&&!permanent.retry&&roles&&fencing&&revisionAttempts&&MAX_SPECIALIST_CONCURRENCY===3;
+  return {name:'mission_runtime_dependency_retry_and_roles',ok,semantic:ok,detail:ok?'Dependency gating, transient retry, revision attempt advancement, stale-attempt fencing, permanent-failure handling and role routing passed.':'A dependency, retry, revision-attempt, stale-attempt fence, permanent-failure or specialist-role policy regressed.',statusOnlyRetry:statusOnly.retry,permanentFailureNotRetried:!permanent.retry,staleAttemptRejected:!isCurrentAttempt(3,4),revisionAttemptAccounting:revisionAttempts,maxParallel:MAX_SPECIALIST_CONCURRENCY};
 }
 
 function testAdaptiveLearningMeasurement() {

@@ -332,6 +332,9 @@ export default async function(req,res) {
     let experimentAssignment=null;
     let verifierRejectionCount=0;
     let strategyPolicy=null;
+    let executionAttempt=Number(executionTask.attempts||0);
+    let verifierTask=null;
+    let verifierAttempt=null;
     try {
       strategyPolicy=executionTask.context_snapshot?.strategyPolicy;
       if(!strategyPolicy){
@@ -354,8 +357,9 @@ export default async function(req,res) {
       let result=await executeStep(workingStep,run.owner_id,run.id,effectiveLessons);
       const postExecutionState=(await db.query("SELECT status FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
       if(!isMissionActive(postExecutionState?.status)) return {kind:'skipped',step,note:'Mission was cancelled while this specialist was executing; no further verifier or completion writes were allowed.'};
-      const verifierTask=(await db.query("UPDATE ultron_specialist_tasks SET status='running',attempts=attempts+1,lease_until=now()+interval '10 minutes',error='',updated_at=now() WHERE owner_id=$1 AND step_id=$2 AND phase='verification' AND status IN ('pending','running') RETURNING id,attempts",[run.owner_id,step.id])).rows[0];
+      verifierTask=(await db.query("UPDATE ultron_specialist_tasks SET status='running',attempts=attempts+1,lease_until=now()+interval '10 minutes',error='',updated_at=now() WHERE owner_id=$1 AND step_id=$2 AND phase='verification' AND (status='pending' OR (status='running' AND lease_until<now())) RETURNING id,attempts",[run.owner_id,step.id])).rows[0];
       if(!verifierTask)throw new Error('Independent verifier task could not be claimed.');
+      verifierAttempt=Number(verifierTask.attempts||0);
       let independentVerification=await verifyStepResult(workingStep,result,db,run.owner_id,run.id);
       const revisionHistory=[];
       for(let revisionNo=1;!independentVerification.passed&&revisionNo<=1;revisionNo++) {
@@ -366,8 +370,12 @@ export default async function(req,res) {
         if(!savedRevision)break;
         revisionHistory.push({id:savedRevision.id,revisionNo,role,instruction:revision.instruction,reason:revision.reason,mode:revision.mode});
         workingStep={...step,input:revision.input};
-        await db.query("UPDATE ultron_specialist_tasks SET attempts=attempts+1,context_snapshot=COALESCE(context_snapshot,'{}'::jsonb)||$3::jsonb,updated_at=now() WHERE id=$1 AND owner_id=$2",[executionTask.id,run.owner_id,JSON.stringify({position:step.position,stepType:step.step_type,title:step.title,input:revision.input,depends_on:step.depends_on||[],revisionNo})]);
-        await db.query("UPDATE ultron_specialist_tasks SET attempts=attempts+1,context_snapshot=$3::jsonb,updated_at=now() WHERE id=$1 AND owner_id=$2",[verifierTask.id,run.owner_id,JSON.stringify({position:step.position,targetStepId:step.id,targetRole:role,verificationContract:'independent_operation_evidence_review',revisionNo})]);
+        const executionRevision=await db.query("UPDATE ultron_specialist_tasks SET attempts=attempts+1,context_snapshot=COALESCE(context_snapshot,'{}'::jsonb)||$3::jsonb,updated_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=$4 RETURNING id",[executionTask.id,run.owner_id,JSON.stringify({position:step.position,stepType:step.step_type,title:step.title,input:revision.input,depends_on:step.depends_on||[],revisionNo}),executionAttempt]);
+        if(!executionRevision.rowCount)throw new Error('Execution task attempt changed before its revision could be recorded.');
+        executionAttempt++;
+        const verifierRevision=await db.query("UPDATE ultron_specialist_tasks SET attempts=attempts+1,context_snapshot=$3::jsonb,updated_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=$4 RETURNING id",[verifierTask.id,run.owner_id,JSON.stringify({position:step.position,targetStepId:step.id,targetRole:role,verificationContract:'independent_operation_evidence_review',revisionNo}),verifierAttempt]);
+        if(!verifierRevision.rowCount)throw new Error('Verifier task attempt changed before its revision could be recorded.');
+        verifierAttempt++;
         try {
           result=await executeStep(workingStep,run.owner_id,run.id,effectiveLessons);
           independentVerification=await verifyStepResult(workingStep,result,db,run.owner_id,run.id);
@@ -378,7 +386,7 @@ export default async function(req,res) {
           throw revisionError;
         }
       }
-      const verifierSaved=await db.query("UPDATE ultron_specialist_tasks SET status=$3,verification=$4::jsonb,lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=$5 RETURNING id",[verifierTask.id,run.owner_id,independentVerification.passed?'completed':'failed',JSON.stringify({...independentVerification,revisionCount:revisionHistory.length}),verifierTask.attempts+revisionHistory.length]);
+      const verifierSaved=await db.query("UPDATE ultron_specialist_tasks SET status=$3,verification=$4::jsonb,lease_until=NULL,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=$5 RETURNING id",[verifierTask.id,run.owner_id,independentVerification.passed?'completed':'failed',JSON.stringify({...independentVerification,revisionCount:revisionHistory.length}),verifierAttempt]);
       if(!verifierSaved.rowCount) throw new Error('Verifier task was cancelled or claimed elsewhere before its result could be committed.');
       if(!independentVerification.passed)throw new Error('Independent verifier rejected '+role+' output after '+revisionHistory.length+' bounded revision(s): '+independentVerification.challenge.join('; '));
       if(strategyPolicy?.enabled===true&&strategyPolicy.policyVersion&&effectiveLessons.some(x=>String(x.id)===String(strategyPolicy.lessonId))) await db.query("INSERT INTO ultron_strategy_trials(owner_id,policy_version,lesson_id,step_type,run_id,step_id,attempt,outcome,verifier_passed) VALUES($1,$2,$3,$4,$5,$6,$7,'operationally_verified',true) ON CONFLICT(owner_id,step_id,attempt,outcome) DO NOTHING",[run.owner_id,strategyPolicy.policyVersion,strategyPolicy.lessonId,step.step_type,run.id,step.id,claim.rows[0].attempts]);
@@ -393,7 +401,7 @@ export default async function(req,res) {
       delete result.lessonUses;
       const saved=await db.query("UPDATE ultron_agent_steps SET status='completed',result=$3::jsonb,completed_at=now(),error='' WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=$4 RETURNING id",[step.id,run.owner_id,JSON.stringify(result),claim.rows[0].attempts]);
       if(!saved.rows.length)return {kind:'skipped',step,note:'Step state changed before completion was committed.'};
-      await db.query("UPDATE ultron_specialist_tasks SET status='completed',output=$3::jsonb,lease_until=NULL,error='',updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=$4",[executionTask.id,run.owner_id,JSON.stringify(result),executionTask.attempts]);
+      await db.query("UPDATE ultron_specialist_tasks SET status='completed',output=$3::jsonb,lease_until=NULL,error='',updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=$4",[executionTask.id,run.owner_id,JSON.stringify(result),executionAttempt]);
       return {kind:'completed',step,role};
     } catch(e) {
       const missionState=(await db.query("SELECT status FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
@@ -405,12 +413,13 @@ export default async function(req,res) {
       if(failedObservations.length) await db.query("UPDATE ultron_specialist_tasks SET context_snapshot=jsonb_set(COALESCE(context_snapshot,'{}'::jsonb),'{lessonObservations}',COALESCE(context_snapshot->'lessonObservations','[]'::jsonb)||$3::jsonb,true),updated_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND EXISTS(SELECT 1 FROM ultron_agent_runs WHERE id=$4 AND owner_id=$2 AND status='running')",[executionTask.id,run.owner_id,JSON.stringify(failedObservations),run.id]);
       const experimentEvent=createExperimentObservationEvent(experimentAssignment,lessonOutcome,attempt,false,undefined,verifierRejectionCount|| (lessonOutcome==='verifier_rejected'?1:0));
       if(experimentEvent) await db.query("UPDATE ultron_specialist_tasks SET context_snapshot=jsonb_set(COALESCE(context_snapshot,'{}'::jsonb),'{experimentObservations}',COALESCE(context_snapshot->'experimentObservations','[]'::jsonb)||$3::jsonb,true),updated_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND EXISTS(SELECT 1 FROM ultron_agent_runs WHERE id=$4 AND owner_id=$2 AND status='running')",[executionTask.id,run.owner_id,JSON.stringify([experimentEvent]),run.id]);
+      if(verifierTask&&Number.isSafeInteger(verifierAttempt)) await db.query("UPDATE ultron_specialist_tasks SET status=$3,lease_until=NULL,error=$4,updated_at=now(),completed_at=CASE WHEN $3='failed' THEN now() ELSE completed_at END WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=$5",[verifierTask.id,run.owner_id,disposition.retry?'pending':'failed',message,verifierAttempt]);
       if(disposition.retry) {
         await db.query("UPDATE ultron_agent_steps SET status='pending',error=$3,started_at=NULL WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=$4",[step.id,run.owner_id,'Transient failure on attempt '+attempt+': '+message,attempt]);
-        await db.query("UPDATE ultron_specialist_tasks SET status='pending',lease_until=NULL,error=$3,updated_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=$4",[executionTask.id,run.owner_id,'Transient failure on attempt '+attempt+': '+message,executionTask.attempts]);
+        await db.query("UPDATE ultron_specialist_tasks SET status='pending',lease_until=NULL,error=$3,updated_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=$4",[executionTask.id,run.owner_id,'Transient failure on attempt '+attempt+': '+message,executionAttempt]);
         return {kind:'retry',step,attempt,message};
       }
-      await db.query("UPDATE ultron_specialist_tasks SET status='failed',lease_until=NULL,error=$3,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=$4",[executionTask.id,run.owner_id,message,executionTask.attempts]);
+      await db.query("UPDATE ultron_specialist_tasks SET status='failed',lease_until=NULL,error=$3,updated_at=now(),completed_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=$4",[executionTask.id,run.owner_id,message,executionAttempt]);
       await db.query("UPDATE ultron_agent_steps SET status='failed',error=$3,completed_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=$4",[step.id,run.owner_id,message,attempt]);
       if(!message.startsWith('Approved learning blocked an unchanged retry:'))await db.query("INSERT INTO ultron_agent_lessons(owner_id,lesson_key,lesson,evidence,confidence,status) VALUES($1,$2,$3,$4::jsonb,0.65,'candidate') ON CONFLICT(owner_id,lesson_key) DO NOTHING",[run.owner_id,run.id+':'+step.position,'Observed failure pattern: the '+String(step.step_type)+' step "'+String(step.title).slice(0,140)+'" failed. Review the recorded error and adjust the plan or inputs before retrying; do not assume the same attempt will succeed.',JSON.stringify({runId:run.id,stepId:step.id,position:step.position,stepType:step.step_type,status:'failed',verified:false,error:message,input:step.input||{}})]);
       return {kind:'failed',step,message};
