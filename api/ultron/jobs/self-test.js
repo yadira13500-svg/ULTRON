@@ -23,6 +23,8 @@ import { specialistContextSelfTest, specialistReasoningSelfTest } from 'lib/spec
 import { specialistBenchmarkCases, scoreSpecialistBenchmark } from 'lib/specialist-inference.js';
 import { localReasoningSelfTest } from 'lib/local-reasoning.js';
 import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment, recommendLessonStrategies, applyApprovedStrategyPolicy, summarizeStrategyTrialOutcomes } from 'lib/learning-evaluation.js';
+import { runGovernancePolicySelfTests } from 'lib/governance-registry.js';
+import { runVerificationEngineSelfTests } from 'lib/verification-runner.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -611,6 +613,13 @@ export default async function (req, res) {
   results.push(await testDatabaseConcurrency());
   results.push(testSpecialistLeaseBoundaryRecovery());
   results.push(testRecoveryControllerDecisions());
+  const governancePolicy=runGovernancePolicySelfTests();
+  const attestationSecurity=await runVerificationEngineSelfTests();
+  const governanceChecks={
+    status:governancePolicy.failed.length===0&&attestationSecurity.failed.length===0?'passed':'failed',
+    policy:governancePolicy,
+    attestationSecurity
+  };
   results.push(testAdaptiveLearningMeasurement());
   results.push(testLessonExperimentAllocation());
   results.push(testLessonExperimentMeasurement());
@@ -665,18 +674,22 @@ export default async function (req, res) {
     return { ...r, testClass: 'in_process_regression', evidence: 'Production module functions are executed in-process with controlled test inputs; this is not live provider inference or device acceptance.' };
   });
   const counts = classifiedResults.reduce((acc, r) => { acc[r.testClass] = (acc[r.testClass] || 0) + 1; return acc; }, {});
-  const status = deterministicFailed.length ? 'failed' : externalFailures.length ? 'degraded_external_sources' : 'healthy';
+  const baselineStatus = deterministicFailed.length ? 'failed' : externalFailures.length ? 'degraded_external_sources' : 'healthy';
+  const governanceFailed = governanceChecks.status !== 'passed';
+  const status = deterministicFailed.length ? 'failed' : externalFailures.length ? 'degraded_external_sources' : governanceFailed ? 'governance_failed' : 'healthy';
   const coverage = {
     liveExternalHttpChecks: counts.live_external_integration || 0,
     liveDatabaseChecks: counts.live_database_integration || 0,
     inProcessRegressionChecks: counts.in_process_regression || 0,
     scorerOnlyChecks: counts.scorer_self_test || 0,
     harnessIntegrityChecks: counts.test_harness_integrity || 0,
+    governancePolicyChecks: governancePolicy.total,
+    attestationSecurityChecks: attestationSecurity.total,
     liveNeuralInferenceExecuted: false,
     ownerIPhoneDeviceTestsExecuted: false,
     paidProviderInferenceExecuted: false
   };
-  console.log('ULTRON self-test summary', JSON.stringify({status,total:classifiedResults.length,counts,coverage,deterministicFailures:deterministicFailed.map(x=>x.name),externalFailures:externalFailures.map(x=>({name:x.name,status:x.status||0}))}));
-  if (deterministicFailed.length) return res.status(500).json({ ok: false, status, failed: deterministicFailed, externalFailures, coverage, results: classifiedResults });
-  return res.json({ ok: true, status, coverage, externalFailures, results: classifiedResults });
+  console.log('ULTRON self-test summary', JSON.stringify({status,baselineStatus,total:classifiedResults.length,counts,coverage,governanceStatus:governanceChecks.status,deterministicFailures:deterministicFailed.map(x=>x.name),externalFailures:externalFailures.map(x=>({name:x.name,status:x.status||0}))}));
+  if (deterministicFailed.length || governanceFailed) return res.status(500).json({ ok: false, status, baselineStatus, failed: deterministicFailed, externalFailures, coverage, governanceChecks, results: classifiedResults });
+  return res.json({ ok: true, status, baselineStatus, coverage, governanceChecks, externalFailures, results: classifiedResults });
 }

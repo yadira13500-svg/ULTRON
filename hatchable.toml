@@ -44,6 +44,11 @@ name = "TAVILY_API_KEY"
 required = false
 description = "Optional Tavily search key for ULTRON web research. Tavily currently includes a free monthly credit allowance."
 
+[[secret]]
+name = "ULTRON_VERIFICATION_SIGNING_KEY"
+required = false
+description = "Private HMAC-SHA-256 signing secret for backend verification attestations. Generate a unique random value of at least 32 characters. Never share it with browsers, AI prompts, logs or API responses."
+
 [ai]
 required = false
 description = "Optional conversational intelligence. ULTRON does not call a model until its owner explicitly enables the AI brain in the app."
