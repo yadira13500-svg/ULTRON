@@ -308,7 +308,7 @@ async function loadNews(){
 $('#refreshNews').addEventListener('click',loadNews);
 $('#newsCountry').addEventListener('change',loadNews);
 $('#newsCategory').addEventListener('change',loadNews);
-time();setInterval(time,30000);showLesson();Promise.all([loadItems(),loadSettings()]).then(()=>Promise.all([loadBrief(),loadActions(),loadMemories(),loadIntegrations(),loadHistory(),loadNews(),loadKnowledge(),loadEvolution(),loadAgentRuns(),loadSensorRecords()])).then(refreshMissionControl);
+time();setInterval(time,30000);showLesson();Promise.all([loadItems(),loadSettings()]).then(async()=>{const groups=[[loadBrief,loadActions,loadMemories],[loadIntegrations,loadHistory,loadNews],[loadKnowledge,loadEvolution,loadAgentRuns],[loadSensorRecords]];for(const group of groups)await Promise.all(group.map(fn=>fn()));await refreshMissionControl()}).catch(error=>console.warn('ULTRON startup sync incomplete',error));
 setInterval(()=>{if(document.visibilityState==='visible')loadNews()},15*60*1000);
 setInterval(()=>{if(document.visibilityState==='visible'&&agentRuns.some(x=>['queued','running'].includes(x.status)))loadAgentRuns()},12000);
 $('#copySiriPrefix').addEventListener('click',async()=>{const value='https://ultron-ptje.hatchable.site/#siri=';try{await navigator.clipboard.writeText(value);$('#siriStatus').textContent='Link prefix copied. Paste it into the Text action, then insert the encoded-text variable after the equals sign.'}catch{$('#siriStatus').textContent=value}});
