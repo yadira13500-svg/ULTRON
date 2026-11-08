@@ -1,3 +1,4 @@
+import { db } from 'hatchable';
 import { checkSourceFreshness } from 'lib/source-check.js';
 import { searchPublicWeb } from 'lib/search.js';
 import { extractResearchQuery, planMission } from 'lib/mission-plan.js';
@@ -525,6 +526,71 @@ async function testSourceFreshnessFallback() {
   };
 }
 
+async function testDatabaseConcurrency() {
+  let ownerId=null, runId=null, stepId=null, secondStepId=null;
+  const checks={controllerClaimSingleWinner:false,executionClaimSingleWinner:false,staleExecutionCommitRejected:false,currentExecutionCommitAccepted:false,verifierClaimSingleWinner:false,staleVerifierCommitRejected:false,currentVerifierCommitAccepted:false,staleControllerCommitRejected:false,currentControllerCommitAccepted:false,activeLeaseProtected:false,completedStepPreserved:false,partialCountsCorrect:false};
+  try {
+    const run=(await db.query("INSERT INTO ultron_agent_runs(owner_id,title,objective,status,plan) VALUES('ultron-selftest-'||gen_random_uuid()::text,'Isolated concurrency fixture','Synthetic self-test only','queued','[]'::jsonb) RETURNING id,owner_id")).rows[0];
+    runId=run.id; ownerId=run.owner_id;
+    stepId=(await db.query("INSERT INTO ultron_agent_steps(run_id,owner_id,position,step_type,title,status) VALUES($1,$2,1,'research_search','Synthetic concurrency step','pending') RETURNING id",[runId,ownerId])).rows[0].id;
+    await db.query("INSERT INTO ultron_specialist_tasks(owner_id,run_id,step_id,phase,specialist_role,status) VALUES($1,$2,$3,'execution','researcher','pending'),($1,$2,$3,'verification','verifier','pending')",[ownerId,runId,stepId]);
+
+    const controllerClaims=await Promise.all([0,1].map(()=>db.query("UPDATE ultron_agent_runs SET status='running',attempts=attempts+1,lease_until=now()+interval '4 minutes' WHERE id=$1 AND status='queued' RETURNING attempts",[runId])));
+    checks.controllerClaimSingleWinner=controllerClaims.reduce((n,x)=>n+x.rows.length,0)===1;
+    const executionClaims=await Promise.all([0,1].map(()=>db.query("UPDATE ultron_specialist_tasks SET status='running',attempts=attempts+1,lease_until=now()+interval '10 minutes' WHERE owner_id=$1 AND step_id=$2 AND phase='execution' AND status='pending' RETURNING id,attempts",[ownerId,stepId])));
+    checks.executionClaimSingleWinner=executionClaims.reduce((n,x)=>n+x.rows.length,0)===1;
+
+    const executionId=executionClaims.flatMap(x=>x.rows)[0]?.id;
+    await db.query("UPDATE ultron_specialist_tasks SET lease_until=now()-interval '1 minute' WHERE id=$1 AND owner_id=$2 AND status='running'",[executionId,ownerId]);
+    await db.query("UPDATE ultron_specialist_tasks SET status='pending',lease_until=NULL,error='Recovered after synthetic lease expiry.' WHERE id=$1 AND owner_id=$2 AND status='running' AND lease_until<now()",[executionId,ownerId]);
+    const executionReclaim=(await db.query("UPDATE ultron_specialist_tasks SET status='running',attempts=attempts+1,lease_until=now()+interval '10 minutes' WHERE id=$1 AND owner_id=$2 AND status='pending' RETURNING attempts",[executionId,ownerId])).rows[0];
+    const staleExecution=await db.query("UPDATE ultron_specialist_tasks SET status='completed',output='{\"worker\":\"stale\"}'::jsonb WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=1 RETURNING id",[executionId,ownerId]);
+    const currentExecution=await db.query("UPDATE ultron_specialist_tasks SET status='completed',output='{\"worker\":\"current\"}'::jsonb,lease_until=NULL WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=$3 RETURNING id",[executionId,ownerId,executionReclaim?.attempts]);
+    checks.staleExecutionCommitRejected=staleExecution.rows.length===0&&executionReclaim?.attempts===2;
+    checks.currentExecutionCommitAccepted=currentExecution.rows.length===1;
+
+    const verifierClaims=await Promise.all([0,1].map(()=>db.query("UPDATE ultron_specialist_tasks SET status='running',attempts=attempts+1,lease_until=now()+interval '10 minutes' WHERE owner_id=$1 AND step_id=$2 AND phase='verification' AND status='pending' RETURNING id,attempts",[ownerId,stepId])));
+    checks.verifierClaimSingleWinner=verifierClaims.reduce((n,x)=>n+x.rows.length,0)===1;
+    const verifierId=verifierClaims.flatMap(x=>x.rows)[0]?.id;
+    await db.query("UPDATE ultron_specialist_tasks SET lease_until=now()-interval '1 minute' WHERE id=$1 AND owner_id=$2 AND status='running'",[verifierId,ownerId]);
+    await db.query("UPDATE ultron_specialist_tasks SET status='pending',lease_until=NULL,error='Recovered interrupted synthetic verifier.' WHERE id=$1 AND owner_id=$2 AND status='running' AND lease_until<now()",[verifierId,ownerId]);
+    const verifierReclaim=(await db.query("UPDATE ultron_specialist_tasks SET status='running',attempts=attempts+1,lease_until=now()+interval '10 minutes' WHERE id=$1 AND owner_id=$2 AND status='pending' RETURNING attempts",[verifierId,ownerId])).rows[0];
+    const staleVerifier=await db.query("UPDATE ultron_specialist_tasks SET status='failed',verification='{\"worker\":\"stale\"}'::jsonb WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=1 RETURNING id",[verifierId,ownerId]);
+    const currentVerifier=await db.query("UPDATE ultron_specialist_tasks SET status='completed',verification='{\"worker\":\"current\"}'::jsonb,lease_until=NULL WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=$3 RETURNING id",[verifierId,ownerId,verifierReclaim?.attempts]);
+    checks.staleVerifierCommitRejected=staleVerifier.rows.length===0&&verifierReclaim?.attempts===2;
+    checks.currentVerifierCommitAccepted=currentVerifier.rows.length===1;
+
+    await db.query("UPDATE ultron_agent_steps SET status='running',attempts=attempts+1,started_at=now() WHERE id=$1 AND owner_id=$2",[stepId,ownerId]);
+    await db.query("UPDATE ultron_specialist_tasks SET status='running',attempts=attempts+1,lease_until=now()+interval '5 minutes' WHERE id=$1 AND owner_id=$2",[executionId,ownerId]);
+    const active=(await db.query("SELECT COUNT(*)::int AS n FROM ultron_specialist_tasks WHERE run_id=$1 AND owner_id=$2 AND phase='execution' AND status='running' AND lease_until>now()",[runId,ownerId])).rows[0]?.n||0;
+    const reset=await db.query("UPDATE ultron_agent_steps SET status='pending',started_at=NULL WHERE id=$1 AND owner_id=$2 AND status='running' AND NOT EXISTS(SELECT 1 FROM ultron_specialist_tasks WHERE run_id=$3 AND owner_id=$2 AND phase='execution' AND status='running' AND lease_until>now()) RETURNING id",[stepId,ownerId,runId]);
+    checks.activeLeaseProtected=active===1&&reset.rows.length===0;
+
+    await db.query("UPDATE ultron_agent_steps SET status='completed',result='{\"synthetic\":true}'::jsonb,completed_at=now() WHERE id=$1 AND owner_id=$2",[stepId,ownerId]);
+    const completedReset=await db.query("UPDATE ultron_agent_steps SET status='pending' WHERE id=$1 AND owner_id=$2 AND status='running' RETURNING id",[stepId,ownerId]);
+    secondStepId=(await db.query("INSERT INTO ultron_agent_steps(run_id,owner_id,position,step_type,title,status) VALUES($1,$2,2,'research_search','Synthetic pending step','pending') RETURNING id",[runId,ownerId])).rows[0].id;
+    const counts=(await db.query("SELECT COUNT(*) FILTER(WHERE status='completed')::int AS completed,COUNT(*) FILTER(WHERE status='pending')::int AS pending FROM ultron_agent_steps WHERE run_id=$1 AND owner_id=$2",[runId,ownerId])).rows[0];
+    checks.completedStepPreserved=completedReset.rows.length===0;
+    checks.partialCountsCorrect=counts?.completed===1&&counts?.pending===1;
+
+    const staleController=await db.query("UPDATE ultron_agent_runs SET status='failed' WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=0 RETURNING id",[runId,ownerId]);
+    const currentController=await db.query("UPDATE ultron_agent_runs SET status='completed',result='{\"synthetic\":true}'::jsonb,completed_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND attempts=1 RETURNING id",[runId,ownerId]);
+    checks.staleControllerCommitRejected=staleController.rows.length===0;
+    checks.currentControllerCommitAccepted=currentController.rows.length===1;
+
+    const ok=Object.values(checks).every(Boolean);
+    return {name:'database_concurrency_recovery_stress',ok,semantic:ok,fixture:'isolated synthetic rows in production PostgreSQL; no owner missions modified',checks,detail:ok?'Concurrent run and task claims had single winners; expired execution and verifier leases were reclaimed; stale commits were rejected; current commits succeeded; active leases and completed work were preserved; partial completion counts remained accurate.':'One or more isolated PostgreSQL concurrency/recovery invariants failed.'};
+  } catch(e) {
+    return {name:'database_concurrency_recovery_stress',ok:false,semantic:false,fixture:'isolated synthetic rows; cleanup attempted',checks,error:String(e?.message||e).slice(0,500),detail:'Database concurrency stress test could not complete.'};
+  } finally {
+    if(ownerId&&runId) {
+      try { await db.query("DELETE FROM ultron_specialist_tasks WHERE owner_id=$1 AND run_id=$2",[ownerId,runId]); } catch {}
+      try { await db.query("DELETE FROM ultron_agent_steps WHERE owner_id=$1 AND run_id=$2",[ownerId,runId]); } catch {}
+      try { await db.query("DELETE FROM ultron_agent_runs WHERE owner_id=$1 AND id=$2",[ownerId,runId]); } catch {}
+    }
+  }
+}
+
 export default async function (req, res) {
   const results = [];
   results.push(memoryRetrievalSelfTest());
@@ -539,6 +605,7 @@ export default async function (req, res) {
   results.push(testAdaptiveMissionReplanning());
   results.push(testRecoveryIntelligence());
   results.push(testMissionRuntimePolicies());
+  results.push(await testDatabaseConcurrency());
   results.push(testSpecialistLeaseBoundaryRecovery());
   results.push(testRecoveryControllerDecisions());
   results.push(testAdaptiveLearningMeasurement());
