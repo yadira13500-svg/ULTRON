@@ -21,6 +21,7 @@ import { matchesTaskReplay, matchesKnowledgeReplay, matchesSkillApplicationRepla
 import { decideRecoveryAction, recoveryEventKey } from 'lib/recovery-controller.js';
 import { specialistContextSelfTest, specialistReasoningSelfTest } from 'lib/specialist-context.js';
 import { specialistBenchmarkCases, scoreSpecialistBenchmark } from 'lib/specialist-inference.js';
+import { localReasoningSelfTest } from 'lib/local-reasoning.js';
 import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment, recommendLessonStrategies, applyApprovedStrategyPolicy, summarizeStrategyTrialOutcomes } from 'lib/learning-evaluation.js';
 
 export const access = 'scheduler';
@@ -617,6 +618,7 @@ export default async function (req, res) {
   results.push(testStrategyTrialTracking());
   results.push(specialistContextSelfTest());
   results.push(specialistReasoningSelfTest());
+  results.push(localReasoningSelfTest());
   const benchmarkCases=specialistBenchmarkCases();
   const benchmarkChecks=benchmarkCases.map(item=>({positive:scoreSpecialistBenchmark(item.id,item.expected),negative:scoreSpecialistBenchmark(item.id,{...item.expected,[Object.keys(item.expected)[0]]:'deliberately-wrong'})}));
   const benchmarkOk=benchmarkCases.length===3&&benchmarkChecks.every(x=>x.positive.passed&&!x.negative.passed);
