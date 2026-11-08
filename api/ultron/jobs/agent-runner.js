@@ -9,6 +9,7 @@ import { createLessonObservationEvents, assignLessonExperiment, createExperiment
 import { matchesTaskReplay, matchesKnowledgeReplay, matchesSkillApplicationReplay } from 'lib/mission-idempotency.js';
 import { decideRecoveryAction, recoveryEventKey } from 'lib/recovery-controller.js';
 import { buildSpecialistContext } from 'lib/specialist-context.js';
+import { runSpecialistReasoningSession } from 'lib/specialist-inference.js';
 
 export const access = 'scheduler';
 export const methods = ['POST'];
@@ -356,12 +357,22 @@ export default async function(req,res) {
       if(startedObservations.length) await db.query("UPDATE ultron_specialist_tasks SET context_snapshot=jsonb_set(COALESCE(context_snapshot,'{}'::jsonb),'{lessonObservations}',COALESCE(context_snapshot->'lessonObservations','[]'::jsonb)||$3::jsonb,true),updated_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND EXISTS(SELECT 1 FROM ultron_agent_runs WHERE id=$4 AND owner_id=$2 AND status='running')",[executionTask.id,run.owner_id,JSON.stringify(startedObservations),run.id]);
       let workingStep=step;
       let result=await executeStep(workingStep,run.owner_id,run.id,effectiveLessons);
+      // Optional real model reasoning is strictly opt-in; no provider request occurs unless the owner enables it.
+      const specialistModelSessions=[];
+      if(role==='researcher'||role==='analyst') {
+        const modelSession=await runSpecialistReasoningSession(role,{missionId:run.id,stepType:step.step_type,title:step.title,input:workingStep.input||{}},{operationResult:result});
+        specialistModelSessions.push({role,...modelSession});
+        if(modelSession.status==='completed') result.modelReasoning={role,provider:modelSession.provider,model:modelSession.model,output:modelSession.output,latencyMs:modelSession.latencyMs,usage:modelSession.usage||null};
+      }
       const postExecutionState=(await db.query("SELECT status FROM ultron_agent_runs WHERE id=$1 AND owner_id=$2",[run.id,run.owner_id])).rows[0];
       if(!isMissionActive(postExecutionState?.status)) return {kind:'skipped',step,note:'Mission was cancelled while this specialist was executing; no further verifier or completion writes were allowed.'};
       verifierTask=(await db.query("UPDATE ultron_specialist_tasks SET status='running',attempts=attempts+1,lease_until=now()+interval '10 minutes',error='',updated_at=now() WHERE owner_id=$1 AND step_id=$2 AND phase='verification' AND (status='pending' OR (status='running' AND lease_until<now())) RETURNING id,attempts",[run.owner_id,step.id])).rows[0];
       if(!verifierTask)throw new Error('Independent verifier task could not be claimed.');
       verifierAttempt=Number(verifierTask.attempts||0);
       let independentVerification=await verifyStepResult(workingStep,result,db,run.owner_id,run.id);
+      const verifierModelSession=await runSpecialistReasoningSession('verifier',{missionId:run.id,stepType:step.step_type,title:step.title,acceptanceContract:'Challenge the proposed result against supplied evidence; report unsupported claims, contradictions and missing evidence.'},{operationResult:result,deterministicVerification:independentVerification});
+      specialistModelSessions.push({role:'verifier',...verifierModelSession});
+      if(verifierModelSession.status==='completed') independentVerification.modelReview={provider:verifierModelSession.provider,model:verifierModelSession.model,output:verifierModelSession.output,latencyMs:verifierModelSession.latencyMs,usage:verifierModelSession.usage||null};
       const revisionHistory=[];
       for(let revisionNo=1;!independentVerification.passed&&revisionNo<=1;revisionNo++) {
         verifierRejectionCount++;
@@ -396,7 +407,8 @@ export default async function(req,res) {
       const experimentEvent=createExperimentObservationEvent(experimentAssignment,'operationally_verified',claim.rows[0].attempts,true,undefined,verifierRejectionCount);
       if(experimentEvent) await db.query("UPDATE ultron_specialist_tasks SET context_snapshot=jsonb_set(COALESCE(context_snapshot,'{}'::jsonb),'{experimentObservations}',COALESCE(context_snapshot->'experimentObservations','[]'::jsonb)||$3::jsonb,true),updated_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' AND EXISTS(SELECT 1 FROM ultron_agent_runs WHERE id=$4 AND owner_id=$2 AND status='running')",[executionTask.id,run.owner_id,JSON.stringify([experimentEvent]),run.id]);
       if(revisionHistory.length)result.specialistRevisions=revisionHistory;
-      result.specialist={role,worker:'bounded_deterministic_specialist',parallelBatchLimit:MAX_SPECIALIST_CONCURRENCY,executionTaskId:executionTask.id,verifierTaskId:verifierTask.id};
+      result.specialist={role,worker:specialistModelSessions.some(x=>x.status==='completed')?'hybrid_model_and_deterministic':'bounded_deterministic_specialist',parallelBatchLimit:MAX_SPECIALIST_CONCURRENCY,executionTaskId:executionTask.id,verifierTaskId:verifierTask.id};
+      result.modelSessions=specialistModelSessions.map(x=>({role:x.role,status:x.status,attempted:!!x.attempted,provider:x.provider||null,model:x.model||null,latencyMs:x.latencyMs||null,reason:x.reason||null}));
       result.independentVerification=independentVerification;
       result.learningContext={source:experimentAssignment.enabled?'opt_in_lesson_experiment':'owner_approved_lessons',experiment:experimentAssignment.enabled?{id:experimentAssignment.experimentId,cohort:experimentAssignment.cohort,allocation:experimentAssignment.allocation}:null,timing:'loaded_before_execution',scope:'matching_step_type_only',lessonsConsulted:effectiveLessons.map(x=>({id:x.id,lesson:String(x.lesson||'').slice(0,1200),confidence:Number(x.confidence||0)})),count:effectiveLessons.length,applied:result.lessonUses||[],note:'Lessons are fallible owner-approved experience. They inform bounded operational safeguards; they never override user instructions or establish factual truth.'};
       delete result.lessonUses;

@@ -20,6 +20,7 @@ import { sensorAssessmentSelfTest } from 'lib/sensor-intelligence.js';
 import { matchesTaskReplay, matchesKnowledgeReplay, matchesSkillApplicationReplay } from 'lib/mission-idempotency.js';
 import { decideRecoveryAction, recoveryEventKey } from 'lib/recovery-controller.js';
 import { specialistContextSelfTest, specialistReasoningSelfTest } from 'lib/specialist-context.js';
+import { specialistBenchmarkCases, scoreSpecialistBenchmark } from 'lib/specialist-inference.js';
 import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment, recommendLessonStrategies, applyApprovedStrategyPolicy, summarizeStrategyTrialOutcomes } from 'lib/learning-evaluation.js';
 
 export const access = 'scheduler';
@@ -616,6 +617,10 @@ export default async function (req, res) {
   results.push(testStrategyTrialTracking());
   results.push(specialistContextSelfTest());
   results.push(specialistReasoningSelfTest());
+  const benchmarkCases=specialistBenchmarkCases();
+  const benchmarkChecks=benchmarkCases.map(item=>({positive:scoreSpecialistBenchmark(item.id,item.expected),negative:scoreSpecialistBenchmark(item.id,{...item.expected,[Object.keys(item.expected)[0]]:'deliberately-wrong'})}));
+  const benchmarkOk=benchmarkCases.length===3&&benchmarkChecks.every(x=>x.positive.passed&&!x.negative.passed);
+  results.push({name:'specialist_known_answer_benchmark_rubric',ok:benchmarkOk,semantic:benchmarkOk,caseCount:benchmarkCases.length,positiveControls:benchmarkChecks.filter(x=>x.positive.passed).length,negativeControls:benchmarkChecks.filter(x=>!x.negative.passed).length,detail:'Three known-answer benchmark rubrics accept expected outputs and reject deliberately incorrect controls. This tests scoring logic only; no live model inference was performed.'});
   results.push(testCrashWindowReplayContracts());
   results.push(testCancellationGuards());
   results.push(testMissionGraphPolicy());
