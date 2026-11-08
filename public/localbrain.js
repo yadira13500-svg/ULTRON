@@ -6,7 +6,7 @@
   const state={ready:false,loading:false,model:MODEL_ID,backend:'webgpu',lastLatencyMs:null,lastError:null};
   const emit=()=>{for(const fn of listeners){try{fn({...state})}catch{}}};
   function rejectPending(reason){for(const item of pending.values()){try{item.reject(reason)}catch{}}pending.clear();}
-  function failWorker(message){const error=new Error(message||'Local model worker stopped unexpectedly.');rejectPending(error);worker=null;ready=false;loading=false;state.ready=false;state.loading=false;state.lastError=error.message;state.statusText=error.message;emit();}
+  function failWorker(message){const error=new Error(message||'Local model worker stopped unexpectedly.');rejectPending(error);const failedWorker=worker;worker=null;try{failedWorker?.terminate()}catch{}ready=false;loading=false;state.ready=false;state.loading=false;state.lastError=error.message;state.statusText=error.message;emit();}
   function ensureWorker(){
     if(worker)return worker;
     if(!('Worker'in window))throw new Error('This browser does not support background workers required by the local model.');
