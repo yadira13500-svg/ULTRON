@@ -2,7 +2,7 @@ import { checkSourceFreshness } from 'lib/source-check.js';
 import { searchPublicWeb } from 'lib/search.js';
 import { extractResearchQuery, planMission } from 'lib/mission-plan.js';
 import { evaluateMissionPlanner } from 'lib/mission-plan-evaluation.js';
-import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, shouldRecoverRunningStep, isMissionActive, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
+import { classifyStepFailure, dependenciesSatisfied, runParallel, specialistRoleForStep, specialistCapabilitiesForRole, shouldRecoverRunningStep, isMissionActive, isCurrentAttempt, MAX_SPECIALIST_CONCURRENCY } from 'lib/mission-runtime.js';
 import { verifyStepResult, buildRevisionRequest, verifyClaimPassageAnchors, verifyResearchSearchResult } from 'lib/specialist-verifier.js';
 import { validateMissionGraph, buildMissionCoordinationReport } from 'lib/mission-coordinator.js';
 import { buildMissionIntelligence } from 'lib/mission-intelligence.js';
@@ -172,8 +172,9 @@ function testMissionRuntimePolicies() {
   const statusOnly=classifyStepFailure('HTTP 503',1);
   const permanent=classifyStepFailure('HTTP 404',1);
   const roles=specialistRoleForStep('research_search')==='researcher'&&specialistRoleForStep('assess_claim')==='analyst'&&specialistRoleForStep('create_task')==='executor';
-  const ok=depsBlocked&&depsReady&&retry.retry&&exhausted.terminal&&statusOnly.retry&&!permanent.transient&&!permanent.retry&&roles&&MAX_SPECIALIST_CONCURRENCY===3;
-  return {name:'mission_runtime_dependency_retry_and_roles',ok,semantic:ok,detail:ok?'Dependency gating, status-only transient retry, permanent-failure handling and role routing passed.':'A dependency, retry, permanent-failure or specialist-role policy regressed.',statusOnlyRetry:statusOnly.retry,permanentFailureNotRetried:!permanent.retry,maxParallel:MAX_SPECIALIST_CONCURRENCY};
+  const fencing=isCurrentAttempt(4,4)&&!isCurrentAttempt(3,4)&&!isCurrentAttempt(0,0)&&!isCurrentAttempt('NaN',4);
+  const ok=depsBlocked&&depsReady&&retry.retry&&exhausted.terminal&&statusOnly.retry&&!permanent.transient&&!permanent.retry&&roles&&fencing&&MAX_SPECIALIST_CONCURRENCY===3;
+  return {name:'mission_runtime_dependency_retry_and_roles',ok,semantic:ok,detail:ok?'Dependency gating, transient retry, stale-attempt fencing, permanent-failure handling and role routing passed.':'A dependency, retry, stale-attempt fence, permanent-failure or specialist-role policy regressed.',statusOnlyRetry:statusOnly.retry,permanentFailureNotRetried:!permanent.retry,staleAttemptRejected:!isCurrentAttempt(3,4),maxParallel:MAX_SPECIALIST_CONCURRENCY};
 }
 
 function testAdaptiveLearningMeasurement() {
