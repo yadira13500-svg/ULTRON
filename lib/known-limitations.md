@@ -1,12 +1,12 @@
 # ULTRON — Known limitations and remediation register
 
-Last audited: 2026-11-08. Live release at the previous audit: v305; the current test-report transparency changes are staged for v306.
+Last audited: 2026-11-08. Live release: v306.
 
 This register separates verified behavior from unverified capability. A passing backend self-test does not prove browser GPU inference, microphone/camera permissions, or factual accuracy. Test reports now classify each check as live external HTTP, live PostgreSQL integration, in-process regression, scorer-only, or harness-integrity. They explicitly report that neural inference, owner-device acceptance, and paid-provider inference were not executed by the backend suite.
 
 ## Verified operational baseline
 - Existing project only: `ultron-ptje`; private/personal visibility preserved.
-- Latest completed live backend self-test: 46/46 checks passed; no deterministic or external-service failures.
+- Latest live backend self-test after v306 deployment: 47/47 checks passed (5 live external HTTP checks, 1 live PostgreSQL concurrency/recovery check, 39 in-process production-module regression checks, 1 scorer-only control check, and 1 test-harness integrity check). No failures or external-service degradations were reported.
 - NVIDIA credential is configured. `GET /v1/models` succeeded and returned 84 catalog entries. Catalog visibility does not establish inference billing or model availability.
 - Cloudflare voice credentials are configured. The voice capability endpoint reports STT and TTS available.
 - Live owner data audit: 45 mission runs (40 completed, 4 failed, 1 cancelled); no expired running mission lease was found.
@@ -96,7 +96,8 @@ This register separates verified behavior from unverified capability. A passing 
 ## Recently applied reliability fixes
 - v303: terminal mission responses are now returned only after the corresponding conditional database commit succeeds; stale workers reconcile against authoritative state rather than claiming an uncommitted result.
 - v304: browser local-model worker failures reject pending inference promises and reset worker state so the owner can retry instead of waiting indefinitely.
-- The worker-failure handler is also being updated to terminate the failed worker and release its device resources.
+- v305: failed local-model workers are terminated to release device resources before retry.
+- v306: self-test responses classify live HTTP, live PostgreSQL, in-process regression, scorer-only, and harness-integrity checks separately; they explicitly disclose that no live neural inference, iPhone device test, or paid-provider inference was executed.
 
 ## Acceptance policy
 A limitation is not marked fixed merely because code was deployed or a deterministic test passed. It is closed only after its actual execution path is exercised and evidence is recorded.
