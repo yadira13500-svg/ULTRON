@@ -19,8 +19,14 @@ export default async function (req, res) {
   if (req.method === 'POST') {
     const { kind, title, body = '', due_at = null } = req.body || {};
     if (!['task','goal','journal','lesson','reminder'].includes(kind) || typeof title !== 'string' || !title.trim()) return res.status(400).json({ error: 'A valid kind and title are required.' });
-    const { rows } = await db.query('INSERT INTO ultron_items (owner_id, kind, title, body, due_at) VALUES ($1, $2, $3, $4, $5) RETURNING id, kind, title, body, status, due_at, created_at', [owner, kind, title.trim().slice(0,180), String(body).slice(0,12000), due_at || null]);
-    return res.status(201).json({ item: rows[0] });
+    const cleanTitle = title.trim().slice(0,180), cleanBody = String(body).slice(0,12000);
+    const dueDate = due_at ? new Date(due_at) : null;
+    if (due_at && !Number.isFinite(dueDate.getTime())) return res.status(400).json({ error: 'The due date must be a valid date and time.' });
+    const dueValue = dueDate ? dueDate.toISOString() : null;
+    const prior = await db.query("SELECT id,kind,title,body,status,due_at,created_at FROM ultron_items WHERE owner_id=$1 AND kind=$2 AND lower(title)=lower($3) AND body=$4 AND due_at IS NOT DISTINCT FROM $5::timestamptz AND status<>'archived' AND created_at>now()-interval '3 minutes' ORDER BY created_at DESC LIMIT 1", [owner,kind,cleanTitle,cleanBody,dueValue]);
+    if (prior.rows[0]) return res.status(200).json({ item: prior.rows[0], created: false, idempotentReplay: true, note: 'A matching item was created moments ago; the existing item was returned to prevent a duplicate.' });
+    const { rows } = await db.query('INSERT INTO ultron_items (owner_id, kind, title, body, due_at) VALUES ($1, $2, $3, $4, $5) RETURNING id, kind, title, body, status, due_at, created_at', [owner, kind, cleanTitle, cleanBody, dueValue]);
+    return res.status(201).json({ item: rows[0], created: true, idempotentReplay: false });
   }
   if (req.method === 'PUT') {
     const { id, status } = req.body || {};

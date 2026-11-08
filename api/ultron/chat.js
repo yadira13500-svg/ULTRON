@@ -46,6 +46,7 @@ async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia')
   const convo = messages.map(m => ({ role: m.role, content: String(m.content ?? '') }));
   let useTools = true;
   const toolsRan = [];
+  const toolReceipts = [];
   let nudgedAfterTools = false;
   for (let step = 0; step < 7; step++) {
     if (useTools && step >= 4) {
@@ -54,11 +55,16 @@ async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia')
     }
     let r, data, usable = false, failText = '';
     for (const model of candidates) {
-      r = await fetch(P.url, {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
-        body: JSON.stringify(Object.assign({ model, messages: convo, temperature: 0.6, max_tokens: voice ? 600 : 2000 }, defs.length && useTools ? { tools: defs, tool_choice: 'auto' } : {}, OA ? {} : { chat_template_kwargs: { enable_thinking: false } }))
-      });
+      try {
+        r = await fetch(P.url, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+          body: JSON.stringify(Object.assign({ model, messages: convo, temperature: 0.6, max_tokens: voice ? 600 : 2000 }, defs.length && useTools ? { tools: defs, tool_choice: 'auto' } : {}, OA ? {} : { chat_template_kwargs: { enable_thinking: false } }))
+        });
+      } catch (networkError) {
+        failText = model + ' -> network error: ' + String(networkError?.message || networkError).slice(0, 140);
+        continue;
+      }
       if (r.ok) {
         data = await r.json();
         const candidateMessage = data.choices && data.choices[0] && data.choices[0].message;
@@ -80,7 +86,12 @@ async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia')
           convo.push({ role: 'user', content: 'Now reply to the user in plain sentences: confirm what you just did and also answer every other part of their request (use getDateTime for any date or time question).' });
           continue;
         }
-        return { text: 'Done. I completed that for you (' + [...new Set(toolsRan)].join(', ') + '). Check your lists to confirm.', usage: null, steps: step };
+        const completed = toolReceipts.filter(x => x.ok);
+        const failed = toolReceipts.filter(x => !x.ok);
+        const summary = completed.length
+          ? 'I completed ' + [...new Set(completed.map(x => x.name))].join(', ') + '. The AI connection then dropped before I could finish the full reply; check the relevant ULTRON panel. I will not repeat the completed action.'
+          : 'I could not complete the requested tool action because the tool returned an error. ' + (failed[0]?.error || 'Please try again.');
+        return { text: summary, usage: null, steps: step, tool_receipts: toolReceipts };
       }
       throw new Error('NVIDIA API ' + (failText || 'No model returned usable content.'));
     }
@@ -109,6 +120,7 @@ async function runNvidia(key, messages, tools, voice, deep, provider = 'nvidia')
         const t = tools[toolName];
         out = t ? await t.execute(JSON.parse(c.function.arguments || '{}')) : { error: 'Unknown tool.' };
       } catch (e) { out = { error: String(e && e.message || e).slice(0, 200) }; }
+      toolReceipts.push({name:toolName,ok:!out?.error,error:out?.error?String(out.error).slice(0,240):null});
       console.log('ULTRON tool result',toolName,out?.error?'error':'ok',Object.keys(out||{}).slice(0,8).join(','),out?.error?String(out.error).slice(0,180):'');
       convo.push({ role: 'tool', tool_call_id: c.id, content: JSON.stringify(out).slice(0, 6000) });
     }
@@ -188,9 +200,14 @@ export default async function (req, res) {
       description: 'Create a routine task, goal or reminder in ULTRON when the user asks you to add or organize it. This is a reversible local action.',
       inputSchema: { type: 'object', properties: { title: { type: 'string' }, kind: { type: 'string', enum: ['task','goal','reminder'] }, due_at: { type: 'string' } }, required: ['title','kind'] },
       execute: async ({ title, kind, due_at }) => {
-        if (!title || title.length > 180 || !['task','goal','reminder'].includes(kind)) return { error: 'Invalid task.' };
-        const r = await db.query('INSERT INTO ultron_items (owner_id, kind, title, due_at) VALUES ($1, $2, $3, $4) RETURNING id, title, kind, due_at', [owner, kind, title, due_at || null]);
-        return { created: true, item: r.rows[0] };
+        const cleanTitle = String(title || '').trim().slice(0,180);
+        const dueDate = due_at ? new Date(due_at) : null;
+        if (!cleanTitle || !['task','goal','reminder'].includes(kind) || (due_at && !Number.isFinite(dueDate.getTime()))) return { error: 'Invalid task or due date.' };
+        const dueValue = dueDate ? dueDate.toISOString() : null;
+        const prior = await db.query("SELECT id,title,kind,due_at,status,created_at FROM ultron_items WHERE owner_id=$1 AND kind=$2 AND lower(title)=lower($3) AND due_at IS NOT DISTINCT FROM $4::timestamptz AND status<>'archived' AND created_at>now()-interval '3 minutes' ORDER BY created_at DESC LIMIT 1", [owner,kind,cleanTitle,dueValue]);
+        if (prior.rows[0]) return { created: false, idempotentReplay: true, item: prior.rows[0], note: 'A matching item was already created moments ago; the existing item was reused to prevent a duplicate.' };
+        const r = await db.query('INSERT INTO ultron_items (owner_id, kind, title, due_at) VALUES ($1, $2, $3, $4) RETURNING id, title, kind, due_at,status,created_at', [owner, kind, cleanTitle, dueValue]);
+        return { created: true, idempotentReplay: false, item: r.rows[0] };
       }
     },
     launchMission: {
@@ -502,7 +519,7 @@ export default async function (req, res) {
     }
     const reply = result.text || 'I could not produce a response. Please try again.';
     if (settings.memory_enabled) await db.query('INSERT INTO ultron_messages (owner_id, conversation_id, role, content) VALUES ($1, $2, $3, $4)', [owner, conversationId, 'assistant', reply]);
-    return res.json({ reply, conversation_id: conversationId, usage: result.usage || null, steps: result.steps || [], second_opinion: secondOpinion });
+    return res.json({ reply, conversation_id: conversationId, usage: result.usage || null, steps: result.steps || [], second_opinion: secondOpinion, tool_receipts: result.tool_receipts || [] });
   } catch (e) {
     const msg = String(e?.message || 'AI request failed.');
     if (e?.code === 'SetupRequired' || /setup_required|provider key|not configured/i.test(msg)) return res.status(412).json({ error: 'Connect an AI provider in the Hatchable project Setup page, then try again. No AI response was generated.', code: 'ai_setup_required' });
