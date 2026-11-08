@@ -175,8 +175,9 @@ function testMissionRuntimePolicies() {
   const fencing=isCurrentAttempt(4,4)&&!isCurrentAttempt(3,4)&&!isCurrentAttempt(0,0)&&!isCurrentAttempt('NaN',4);
   const executionBase=7,verifierBase=3,revisionCount=1;
   const revisionAttempts=executionBase+revisionCount===8&&verifierBase+revisionCount===4&&isCurrentAttempt(executionBase+revisionCount,8)&&!isCurrentAttempt(executionBase,8);
-  const ok=depsBlocked&&depsReady&&retry.retry&&exhausted.terminal&&statusOnly.retry&&!permanent.transient&&!permanent.retry&&roles&&fencing&&revisionAttempts&&MAX_SPECIALIST_CONCURRENCY===3;
-  return {name:'mission_runtime_dependency_retry_and_roles',ok,semantic:ok,detail:ok?'Dependency gating, transient retry, revision attempt advancement, stale-attempt fencing, permanent-failure handling and role routing passed.':'A dependency, retry, revision-attempt, stale-attempt fence, permanent-failure or specialist-role policy regressed.',statusOnlyRetry:statusOnly.retry,permanentFailureNotRetried:!permanent.retry,staleAttemptRejected:!isCurrentAttempt(3,4),revisionAttemptAccounting:revisionAttempts,maxParallel:MAX_SPECIALIST_CONCURRENCY};
+  const controllerAttemptFence=isCurrentAttempt(9,9)&&!isCurrentAttempt(8,9);
+  const ok=depsBlocked&&depsReady&&retry.retry&&exhausted.terminal&&statusOnly.retry&&!permanent.transient&&!permanent.retry&&roles&&fencing&&revisionAttempts&&controllerAttemptFence&&MAX_SPECIALIST_CONCURRENCY===3;
+  return {name:'mission_runtime_dependency_retry_and_roles',ok,semantic:ok,detail:ok?'Dependency gating, transient retry, revision attempt advancement, stale specialist/controller fencing, permanent-failure handling and role routing passed.':'A dependency, retry, revision-attempt, stale-attempt fence, permanent-failure or specialist-role policy regressed.',statusOnlyRetry:statusOnly.retry,permanentFailureNotRetried:!permanent.retry,staleAttemptRejected:!isCurrentAttempt(3,4),revisionAttemptAccounting:revisionAttempts,staleControllerAttemptRejected:!isCurrentAttempt(8,9),maxParallel:MAX_SPECIALIST_CONCURRENCY};
 }
 
 function testAdaptiveLearningMeasurement() {
