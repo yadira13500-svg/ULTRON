@@ -19,7 +19,7 @@ import { sentinelAssessmentSelfTest } from 'lib/sentinel-assessment.js';
 import { sensorAssessmentSelfTest } from 'lib/sensor-intelligence.js';
 import { matchesTaskReplay, matchesKnowledgeReplay, matchesSkillApplicationReplay } from 'lib/mission-idempotency.js';
 import { decideRecoveryAction, recoveryEventKey } from 'lib/recovery-controller.js';
-import { specialistContextSelfTest } from 'lib/specialist-context.js';
+import { specialistContextSelfTest, specialistReasoningSelfTest } from 'lib/specialist-context.js';
 import { createLessonObservationEvents, summarizeLessonEffectiveness, assignLessonExperiment, createExperimentObservationEvent, summarizeLessonExperiment, recommendLessonStrategies, applyApprovedStrategyPolicy, summarizeStrategyTrialOutcomes } from 'lib/learning-evaluation.js';
 
 export const access = 'scheduler';
@@ -615,6 +615,7 @@ export default async function (req, res) {
   results.push(testAdaptiveStrategyRecommendations());
   results.push(testStrategyTrialTracking());
   results.push(specialistContextSelfTest());
+  results.push(specialistReasoningSelfTest());
   results.push(testCrashWindowReplayContracts());
   results.push(testCancellationGuards());
   results.push(testMissionGraphPolicy());
