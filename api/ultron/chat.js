@@ -1,7 +1,7 @@
 import { ai, db, browser, config, scheduler } from 'hatchable';
 import { searchPublicWeb } from 'lib/search.js';
 import { searchResearchSources } from 'lib/research-stack.js';
-import { rankMemoryCandidates } from 'lib/memory-retrieval.js';
+import { rankMemoryCandidates, buildContextualMemoryQuery } from 'lib/memory-retrieval.js';
 
 export const access = 'admin';
 export const methods = ['POST'];
@@ -162,7 +162,8 @@ export default async function (req, res) {
     ...knowledgeRows.rows.map(x=>({...x,kind:'saved_knowledge',content:x.topic+' '+x.summary})),
     ...priorRows.rows.map(x=>({...x,kind:'past_conversation'}))
   ];
-  const retrievedMemory = rankMemoryCandidates(prompt,candidates,16);
+  const retrievalQuery = buildContextualMemoryQuery(prompt, history.slice(0,-1));
+  const retrievedMemory = rankMemoryCandidates(retrievalQuery,candidates,16);
   const memoryText = retrievedMemory.filter(x=>x.kind==='saved_memory').map(x=>'[relevance '+x.relevance_score+' · '+x.category+'] '+x.content).join('\n').slice(0,5000);
   const preferenceText = retrievedMemory.filter(x=>x.kind==='confirmed_preference').map(x=>'[relevance '+x.relevance_score+' · '+x.category+'] '+x.preference).join('\n').slice(0,3500);
   const lessonText = retrievedMemory.filter(x=>x.kind==='approved_lesson').map(x=>'[relevance '+x.relevance_score+' · confidence '+Number(x.confidence||0).toFixed(2)+'] '+x.lesson).join('\n').slice(0,3500);
