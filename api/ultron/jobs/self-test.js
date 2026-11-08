@@ -488,9 +488,14 @@ function testResearchQualityVerifier() {
   {title:'Copy two',url:'https://same.example/b',source_kind:'web'},
   {title:'Copy three',url:'https://same.example/c',source_kind:'web'}
  ]};
- const pass=verifyResearchSearchResult(good),fail=verifyResearchSearchResult(weak);
- const ok=pass.passed&&!fail.passed&&pass.distinctHostCount===4&&pass.validLeadCount===4;
- return {name:'independent_research_quality_verification',ok,semantic:ok,goodPassed:pass.passed,weakRejected:!fail.passed,distinctHosts:pass.distinctHostCount,goodChecks:pass.checks.map(x=>x.name),failedWeakChecks:fail.challenge,detail:ok?'Verifier checks titled HTTPS leads, host diversity, reported scholarly coverage and inclusion of scholarly results without asserting factual truth.':'Research quality verifier accepted weak source coverage or rejected a valid mixed-source fixture.'};
+ const subdomainOnly={verified:false,results:[
+  {title:'Subdomain one',url:'https://news.example.com/a',snippet:'An original report on transport policy and public services.'},
+  {title:'Subdomain two',url:'https://research.example.com/b',snippet:'A different article discussing regional transit and commuting.'},
+  {title:'Subdomain three',url:'https://data.example.com/c',snippet:'A separate analysis of passenger counts and rail operations.'}
+ ]};
+ const pass=verifyResearchSearchResult(good),fail=verifyResearchSearchResult(weak),subdomainFail=verifyResearchSearchResult(subdomainOnly);
+ const ok=pass.passed&&!fail.passed&&!subdomainFail.passed&&pass.distinctHostCount===4&&pass.independentOriginCount===4&&pass.validLeadCount===4&&subdomainFail.independentOriginCount===1;
+ return {name:'independent_research_quality_verification',ok,semantic:ok,goodPassed:pass.passed,weakRejected:!fail.passed,subdomainOnlyRejected:!subdomainFail.passed,subdomainIndependentOrigins:subdomainFail.independentOriginCount,distinctHosts:pass.distinctHostCount,goodChecks:pass.checks.map(x=>x.name),failedWeakChecks:fail.challenge,detail:ok?'Verifier checks titled HTTPS leads, distinct registrable origins (not just subdomains), reported scholarly coverage and inclusion of scholarly results without asserting factual truth.':'Research quality verifier accepted subdomain-only source diversity or rejected a valid mixed-source fixture.'};
 }
 
 async function testSourceFreshnessFallback() {
