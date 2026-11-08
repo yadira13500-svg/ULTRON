@@ -1,7 +1,7 @@
 import { ai, db, browser, config, scheduler } from 'hatchable';
 import { searchPublicWeb } from 'lib/search.js';
 import { searchResearchSources } from 'lib/research-stack.js';
-import { rankMemoryCandidates, buildContextualMemoryQuery } from 'lib/memory-retrieval.js';
+import { rankMemoryCandidates, buildContextualMemoryQuery, flagPreferenceConflicts } from 'lib/memory-retrieval.js';
 
 export const access = 'admin';
 export const methods = ['POST'];
@@ -163,9 +163,11 @@ export default async function (req, res) {
     ...priorRows.rows.map(x=>({...x,kind:'past_conversation'}))
   ];
   const retrievalQuery = buildContextualMemoryQuery(prompt, history.slice(0,-1));
-  const retrievedMemory = rankMemoryCandidates(retrievalQuery,candidates,16);
+  const rankedMemory = rankMemoryCandidates(retrievalQuery,candidates,16);
+  const preferenceReview = flagPreferenceConflicts(rankedMemory);
+  const retrievedMemory = preferenceReview.items;
   const memoryText = retrievedMemory.filter(x=>x.kind==='saved_memory').map(x=>'[relevance '+x.relevance_score+' · '+x.category+'] '+x.content).join('\n').slice(0,5000);
-  const preferenceText = retrievedMemory.filter(x=>x.kind==='confirmed_preference').map(x=>'[relevance '+x.relevance_score+' · '+x.category+'] '+x.preference).join('\n').slice(0,3500);
+  const preferenceText = retrievedMemory.filter(x=>x.kind==='confirmed_preference').map(x=>'['+(x.memory_conflict?'CONFLICT — confirm current preference':'relevance '+x.relevance_score)+' · '+x.category+'] '+x.preference).join('\n').slice(0,3500);
   const lessonText = retrievedMemory.filter(x=>x.kind==='approved_lesson').map(x=>'[relevance '+x.relevance_score+' · confidence '+Number(x.confidence||0).toFixed(2)+'] '+x.lesson).join('\n').slice(0,3500);
   const knowledgeText = retrievedMemory.filter(x=>x.kind==='saved_knowledge').map(x=>'[relevance '+x.relevance_score+' · '+x.source_name+' · '+x.source_status+' · '+(x.source_url||'no URL')+'] '+x.topic+': '+x.summary).join('\n').slice(0,6000);
   const conversationText = retrievedMemory.filter(x=>x.kind==='past_conversation').map(x=>'[historical '+x.role+' · '+x.created_at+' · relevance '+x.relevance_score+'] '+String(x.content||'').slice(0,700)).join('\n').slice(0,4500);
