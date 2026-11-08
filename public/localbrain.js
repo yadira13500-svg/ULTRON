@@ -1,6 +1,6 @@
 (() => {
   const MODEL_ID='SmolLM2-360M-Instruct-q4f32_1-MLC';
-  let worker=null, ready=false, loading=false, sequence=0;
+  let worker=null, ready=false, loading=false, sequence=0, teamBusy=false;
   const pending=new Map(), history=[];
   const listeners=new Set();
   const state={ready:false,loading:false,model:MODEL_ID,backend:'webgpu',lastLatencyMs:null,lastError:null};
@@ -52,6 +52,20 @@
       const messages=[{role:'system',content:'You are ULTRON, a careful local assistant. Answer clearly and directly. Distinguish known facts from assumptions. If you do not know or lack evidence, say so. Do not invent citations, current facts, tool use, or verification. You are a small on-device model; acknowledge uncertainty on difficult questions.'},...history.slice(-6),{role:'user',content:q}];
       history.push({role:'user',content:q});while(history.length>8)history.shift();
       return new Promise((resolve,reject)=>{pending.set(requestId,{resolve,reject});ensureWorker().postMessage({type:'generate',requestId,messages});});
+    },
+    async runSpecialistTeam(prompt,evidence=''){
+      if(!ready)throw new Error('Load the local model first.');
+      if(teamBusy)throw new Error('ULTRON local specialist team is already processing a mission.');
+      const q=String(prompt||'').trim();if(!q)throw new Error('Enter a mission for the specialist team.');
+      teamBusy=true;const started=performance.now();
+      const invokeRole=(messages,maxTokens)=>{const requestId=String(++sequence);return new Promise((resolve,reject)=>{pending.set(requestId,{resolve,reject});ensureWorker().postMessage({type:'generate',requestId,messages,maxTokens});});};
+      try{
+        const supplied=String(evidence||'').slice(0,5000)||'No external source material was supplied. Do not claim web research was performed.';
+        const researcher=await invokeRole([{role:'system',content:'You are ULTRON Researcher, a separate evidence-mapping specialist. You have no web or file tools. Break the mission into subquestions; distinguish supplied evidence from assumptions; identify missing evidence and verification needs. Never claim you searched.'},{role:'user',content:'MISSION: '+q+'\nSUPPLIED MATERIAL: '+supplied+'\nReturn concise known, unknown, and verification needs.'}],190);
+        const analyst=await invokeRole([{role:'system',content:'You are ULTRON Analyst. Solve the mission using only the prompt and researcher map. Distinguish inference from fact, show a concise reasoning summary, and flag ambiguity. Do not fabricate sources.'},{role:'user',content:'MISSION: '+q+'\nRESEARCHER MAP:\n'+researcher.reply+'\nSUPPLIED MATERIAL:\n'+supplied+'\nGive a provisional answer and limitations.'}],230);
+        const verifier=await invokeRole([{role:'system',content:'You are ULTRON Verifier, a separate adversarial review session. Do not merely agree. Check the original task and analyst output for unsupported claims, logical gaps, arithmetic errors, contradictions, and missing evidence. You have no external tools.'},{role:'user',content:'ORIGINAL MISSION: '+q+'\nRESEARCHER MAP:\n'+researcher.reply+'\nANALYST PROPOSAL:\n'+analyst.reply+'\nSUPPLIED MATERIAL:\n'+supplied+'\nReturn verdict: pass, qualified, or reject; list defects and corrected conclusion.'}],210);
+        return {reply:'RESEARCHER — evidence map\n'+researcher.reply+'\n\nANALYST — provisional analysis\n'+analyst.reply+'\n\nINDEPENDENT VERIFIER — challenge\n'+verifier.reply+'\n\nULTRON status: three separate on-device specialist passes completed. This is not proof of factual accuracy; no web search or external verification was performed.',workflow:'local_three_specialist_passes',sessions:[{role:'researcher',latencyMs:researcher.latencyMs},{role:'analyst',latencyMs:analyst.latencyMs},{role:'verifier',latencyMs:verifier.latencyMs}],totalLatencyMs:Math.round(performance.now()-started),verified:false};
+      }finally{teamBusy=false;}
     },
     resetConversation(){history.length=0;},
     unload(){

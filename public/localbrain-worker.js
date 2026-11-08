@@ -34,7 +34,7 @@ self.onmessage = async event => {
       const response = await engine.chat.completions.create({
         messages: Array.isArray(message.messages) ? message.messages : [],
         temperature: 0.2,
-        max_tokens: 320,
+        max_tokens: Math.max(96, Math.min(320, Number(message.maxTokens) || 320)),
         stream: false
       });
       const reply = String(response?.choices?.[0]?.message?.content || '').trim();
